@@ -1,0 +1,128 @@
+Build a fully functional web application for tracking a Capture the Flag-style team game. The app should be visually clear, real-time, and easy to operate during a live game. Here are the full specifications:
+
+
+GAME OVERVIEW
+
+There are multiple teams (configurable, default to 2) competing to capture 9 posts (point-generating locations). Every 30 minutes, each captured post generates points for the owning team based on its type:
+
+- 4 posts generate 30 points each
+- 3 posts generate 40 points each
+- 2 posts generate 50 points each
+
+Label the posts clearly (e.g., Post A through I) and assign each a fixed point value based on the distribution above.
+
+
+CONFIGURABLE SETTINGS (Settings Panel)
+
+Include a settings panel where the admin can configure:
+
+- Number of teams and team names/colors
+- Capture cooldown duration (default: 10 minutes) -- the time a post must wait before it can be captured again after being taken
+- Secure cooldown multiplier -- how much longer the cooldown is when a post is Secured (e.g., 1.5x or 2x, configurable)
+- Action costs (points spent to perform each action):
+  - Cost to Steal
+  - Cost to Secure
+  - Cost to Safe
+  - Cost to Break Safe (stealing from an immune team)
+
+
+POST BOARD (Main Display)
+
+Display all 9 posts in a visual grid or map layout. Each post card must show:
+
+- Post name and point value (e.g., "Post A -- 30 pts/cycle")
+- Owning team (shown with team color)
+- Secured status -- visually indicate if the post is currently Secured (e.g., a lock icon or badge)
+- Cooldown timer -- a live countdown showing how long until the post can be captured again. If the post is Secured, reflect the extended cooldown. When the cooldown expires, indicate that the post is capturable.
+
+
+TEAM DASHBOARD
+
+For each team, display:
+
+- Team name and color
+- Current point total
+- Safe/Immunity status -- clearly indicate if the team currently has immunity from steals (e.g., a shield icon)
+- Quick action buttons for each possible action (see below)
+- Manual point adjustment -- buttons or an input to manually add or subtract any number of points (for corrections or custom events)
+
+
+ACTIONS
+
+All actions are initiated from the acting team's panel, and target either a specific post or a specific enemy team. Deduct the action cost from the acting team's points before applying the effect.
+
+1. Capture Post
+- A team captures a post that is not on cooldown
+- The post now belongs to that team
+- Start the capture cooldown timer for that post
+- The acting team must be specified; no point cost
+
+2. Steal
+- The acting team steals 30% of a target team's current points
+- Deduct the Steal cost from the acting team first
+- Add 30% of the target's points to the acting team, and remove it from the target
+- Cannot steal a team that has immunity, unless the acting team performs a Break Safe instead (see below)
+
+3. Secure
+- The acting team secures one of their own posts
+- Deduct the Secure cost
+- Mark that post as Secured -- display a lock icon
+- The post's cooldown is now the extended Secured cooldown (as configured)
+- Securing can be undone manually via admin override
+
+4. Safe
+- The acting team activates immunity -- no other team can steal from them
+- Deduct the Safe cost
+- Display a shield or immunity indicator on their team card
+- Immunity persists until it is broken
+
+5. Break Safe (Steal through immunity)
+- A team attempts to steal from a team that currently has immunity
+- Deduct the Break Safe cost from the acting team
+- The target team loses their immunity immediately
+- The target team is now vulnerable again (the steal itself does NOT automatically go through -- the game master decides whether to follow up with a normal steal or just use this to strip immunity)
+- Clearly log this event in the event log
+
+
+EVENT LOG
+
+Display a scrollable, timestamped event log at the bottom or side of the screen showing every action taken, for example:
+
+- "14:32 -- Team Red stole 240 pts from Team Blue"
+- "14:45 -- Team Blue activated Safe (immunity)"
+- "14:50 -- Team Green broke Team Blue's immunity (Break Safe)"
+- "15:00 -- Post E captured by Team Red (cooldown: 10 min)"
+
+
+POINT GENERATION TIMER
+
+Include a global 30-minute cycle timer that:
+
+- Counts down to the next point generation event
+- When it reaches zero, automatically awards points to each team based on which posts they own
+- Resets and starts again
+- Shows clearly on screen (e.g., "Next payout in: 12:43")
+- Allows the admin to manually trigger a payout or reset the timer
+
+
+UI/UX REQUIREMENTS
+
+- Clean, game-appropriate visual design -- dark theme preferred, with bold team colors
+- Fully responsive (works on tablet/laptop for on-the-go game management)
+- All timers must be live and accurate -- use setInterval or equivalent
+- No page reloads needed; all state updates must be reflected instantly across all connected devices
+- Confirm dialogs before executing destructive or costly actions (e.g., "Confirm: Steal from Team Blue for 50 pts?")
+- All team point totals and post statuses must update instantly on action for every connected device
+
+
+ARCHITECTURE REQUIREMENTS
+
+This app must support multiple devices sharing the same live game state simultaneously. For example, a game master on a laptop and a referee on a tablet should both see the same data in real time. To achieve this, the app requires:
+
+- A backend server (Node.js with Express is recommended, but any suitable stack is acceptable)
+- A persistent data store to save game state (SQLite or a simple JSON-backed store is sufficient -- no need for a heavy database)
+- Real-time communication using WebSockets (e.g., Socket.io) so that all connected clients receive instant updates whenever any action is performed
+- A clean separation between frontend and backend code, organized into appropriate files and folders rather than a single file
+- The app should be deployable to a platform such as Railway, Render, or Fly.io
+
+All game state (team points, post ownership, cooldown timers, immunity status, settings) must be stored on the server and broadcast to all connected clients on every change. Clients should not rely on local state as the source of truth.
