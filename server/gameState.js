@@ -89,7 +89,7 @@ class GameState {
     const actor = this.getTeam(actingTeamId);
     const target = this.getTeam(targetTeamId);
     if (!actor || !target) return { success: false, error: 'Team not found' };
-    if (target.hasSafe) return { success: false, error: `${target.name} has immunity. Use Break Safe first.` };
+    if (target.hasSafe) return { success: false, error: `${target.name} has immunity. Use Break Shield first.` };
 
     const cost = this.state.settings.costs.steal;
     if (actor.points < cost) return { success: false, error: `Not enough points (need ${cost}, have ${actor.points})` };
@@ -130,7 +130,7 @@ class GameState {
     return { success: true };
   }
 
-  safe(actingTeamId) {
+  shield(actingTeamId) {
     const actor = this.getTeam(actingTeamId);
     if (!actor) return { success: false, error: 'Team not found' };
     if (actor.hasSafe) return { success: false, error: 'Already has immunity' };
@@ -141,12 +141,12 @@ class GameState {
     actor.points -= cost;
     actor.hasSafe = true;
 
-    this.log(`${actor.name} activated Safe (immunity) (cost: ${cost} pts)`);
+    this.log(`${actor.name} activated Shield (immunity) (cost: ${cost} pts)`);
     this.save();
     return { success: true };
   }
 
-  breakSafe(actingTeamId, targetTeamId) {
+  breakShield(actingTeamId, targetTeamId) {
     const actor = this.getTeam(actingTeamId);
     const target = this.getTeam(targetTeamId);
     if (!actor || !target) return { success: false, error: 'Team not found' };
@@ -158,7 +158,7 @@ class GameState {
     actor.points -= cost;
     target.hasSafe = false;
 
-    this.log(`${actor.name} broke ${target.name}'s immunity (Break Safe) (cost: ${cost} pts)`);
+    this.log(`${actor.name} broke ${target.name}'s immunity (Break Shield) (cost: ${cost} pts)`);
     this.save();
     return { success: true };
   }
@@ -228,11 +228,11 @@ class GameState {
     return { success: true };
   }
 
-  removeSafe(teamId) {
+  removeShield(teamId) {
     const team = this.getTeam(teamId);
     if (!team) return { success: false, error: 'Team not found' };
     team.hasSafe = false;
-    this.log(`Admin removed immunity from ${team.name}`);
+    this.log(`Admin removed immunity (Shield) from ${team.name}`);
     this.save();
     return { success: true };
   }

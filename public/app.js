@@ -129,7 +129,7 @@ function teamCard(team) {
     <span>${escHtml(team.name)}</span>
     <div style="display:flex;gap:6px;align-items:center">
       ${team.hasSafe ? '<span class="safe-badge">🛡️ Immune</span>' : ''}
-      ${team.hasSafe ? `<button class="btn btn-xs btn-secondary" onclick="removeSafe('${team.id}')">✕ Remove</button>` : ''}
+      ${team.hasSafe ? `<button class="btn btn-xs btn-secondary" onclick="removeShield('${team.id}')">✕ Remove</button>` : ''}
     </div>
   </div>
   <div class="team-body">
@@ -171,16 +171,16 @@ function teamCard(team) {
         </select>
       </div>
 
-      <!-- Safe -->
+      <!-- Shield -->
       <div class="action-row">
-        <button class="btn btn-primary btn-xs" onclick="activateSafe('${team.id}')" ${team.hasSafe ? 'disabled' : ''}>
-          🛡️ Safe (${gs.settings.costs.safe}pts)${team.hasSafe ? ' · Active' : ''}
+        <button class="btn btn-primary btn-xs" onclick="activateShield('${team.id}')" ${team.hasSafe ? 'disabled' : ''}>
+          🛡️ Shield (${gs.settings.costs.safe}pts)${team.hasSafe ? ' · Active' : ''}
         </button>
       </div>
 
-      <!-- Break Safe -->
+      <!-- Break Shield -->
       <div class="action-row">
-        <button class="btn btn-danger btn-xs" onclick="breakSafe('${team.id}')">⚔️ Break Safe (${gs.settings.costs.breakSafe}pts)</button>
+        <button class="btn btn-danger btn-xs" onclick="breakShield('${team.id}')">⚔️ Break Shield (${gs.settings.costs.breakSafe}pts)</button>
         <select class="action-select" id="bs-${team.id}">
           <option value="">— immune team —</option>
           ${others.filter(t => t.hasSafe).map(t => `<option value="${t.id}">${escHtml(t.name)}</option>`).join('')}
@@ -295,21 +295,21 @@ function securePost(actingTeamId) {
     () => socket.emit('secure', { actingTeamId, postId }));
 }
 
-function activateSafe(actingTeamId) {
+function activateShield(actingTeamId) {
   const team = gs.teams.find(t => t.id === actingTeamId);
   const cost = gs.settings.costs.safe;
-  confirmAction(`Activate Safe (immunity) for ${team.name}?\nCost: ${cost} pts`,
-    () => socket.emit('safe', { actingTeamId }));
+  confirmAction(`Activate Shield (immunity) for ${team.name}?\nCost: ${cost} pts`,
+    () => socket.emit('shield', { actingTeamId }));
 }
 
-function breakSafe(actingTeamId) {
+function breakShield(actingTeamId) {
   const targetId = document.getElementById(`bs-${actingTeamId}`).value;
   if (!targetId) { showToast('No immune team selected', 'warn'); return; }
   const actor = gs.teams.find(t => t.id === actingTeamId);
   const target = gs.teams.find(t => t.id === targetId);
   const cost = gs.settings.costs.breakSafe;
   confirmAction(`Break ${target.name}'s immunity?\nCost: ${cost} pts from ${actor.name}`,
-    () => socket.emit('breakSafe', { actingTeamId, targetTeamId: targetId }));
+    () => socket.emit('breakShield', { actingTeamId, targetTeamId: targetId }));
 }
 
 function unsecurePost(postId) {
@@ -318,10 +318,10 @@ function unsecurePost(postId) {
     () => socket.emit('unsecurePost', { postId }));
 }
 
-function removeSafe(teamId) {
+function removeShield(teamId) {
   const team = gs.teams.find(t => t.id === teamId);
-  confirmAction(`Remove immunity from ${team.name}? (Admin override)`,
-    () => socket.emit('removeSafe', { teamId }));
+  confirmAction(`Remove immunity (Shield) from ${team.name}? (Admin override)`,
+    () => socket.emit('removeShield', { teamId }));
 }
 
 function addPost(tier) {
@@ -438,8 +438,8 @@ function openSettings() {
       <h3>Action Costs (pts)</h3>
       <label>Steal          <input type="number" id="s-steal"    value="${s.costs.steal}"    min="0"></label>
       <label>Secure         <input type="number" id="s-secure"   value="${s.costs.secure}"   min="0"></label>
-      <label>Safe           <input type="number" id="s-safe"     value="${s.costs.safe}"     min="0"></label>
-      <label>Break Safe     <input type="number" id="s-breaksafe" value="${s.costs.breakSafe}" min="0"></label>
+      <label>Shield         <input type="number" id="s-safe"     value="${s.costs.safe}"     min="0"></label>
+      <label>Break Shield   <input type="number" id="s-breaksafe" value="${s.costs.breakSafe}" min="0"></label>
     </div>`;
   document.getElementById('settings-modal').classList.remove('hidden');
 }
