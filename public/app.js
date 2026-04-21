@@ -731,13 +731,11 @@ async function submitLogin() {
       return; 
     }
     
-    authUser = data.user;
-    console.log('[Login] Success! authUser set to:', authUser);
-    
-    closeLoginModal();
-    updateAuthUI();
-    if (gs) render();
-    showToast(`Logged in as ${authUser.username}`, 'info');
+    // Login successful: we MUST reload the entire page. 
+    // Express-session creates a brand new connection cookie that the currently 
+    // open Socket.IO connection is entirely unaware of! Reloading safely forces 
+    // Socket.IO to reconnect using the new authenticated session cookie.
+    window.location.reload();
   } catch (e) {
     console.error('[Login] Fetch error:', e);
     errEl.textContent = 'Login failed. Try again.';
@@ -748,12 +746,8 @@ async function submitLogin() {
 async function logout() {
   console.log('[Logout] Requesting logout...');
   await fetch('/auth/logout', { method: 'POST' });
-  authUser = null;
-  editMode = false;
-  console.log('[Logout] Success, authUser is null, editMode disabled.');
-  updateAuthUI();
-  if (gs) render();
-  showToast('Logged out', 'info');
+  // Reload the page to drop the local Socket.IO session context
+  window.location.reload();
 }
 
 // ── Admin Accounts Modal ──────────────────────────────────────────

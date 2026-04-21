@@ -31,12 +31,12 @@ const sessionMiddleware = session({
     client: redisClient,
     prefix: 'ctfapp:',
   }),
+  proxy: true,
   secret: process.env.SESSION_SECRET || 'ctf-secret-key',
   resave: false,
   saveUninitialized: false,
   cookie: {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
     maxAge: 24 * 60 * 60 * 1000 
   }
 });
