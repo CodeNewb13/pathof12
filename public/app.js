@@ -100,12 +100,12 @@ function postCard(post, showDelete = false, index = 0, total = 1) {
     ${team
       ? `<span class="owner-badge" style="background:${team.color}; padding:4px 8px; border-radius:4px;">${escHtml(team.name)}</span>`
       : '<span class="owner-badge unowned" style="padding:4px 8px; border-radius:4px;">Unowned</span>'}
-    ${post.isSecured ? '<span class="secured-badge">🔒 Secured</span>' : ''}
+    ${post.isSecured ? `<span class="secured-badge" id="sec-badge-${post.id}">🔒 Secured</span>` : ''}
   </div>
   <div class="post-cooldown" id="cd-wrap-${post.id}" style="margin-top: 4px;">
-    ${onCooldown
+    ${onCooldown && !post.isSecured
       ? `<span class="cooldown-timer" id="cd-${post.id}" data-ends="${post.cooldownEndsAt}">⏳ --:--</span>`
-      : '<span class="capturable-badge" style="background:rgba(0,0,0,0.3); padding:4px 8px; border-radius:4px;">✅ Capturable</span>'}
+      : (!post.isSecured ? '<span class="capturable-badge" style="background:rgba(0,0,0,0.3); padding:4px 8px; border-radius:4px;">✅ Capturable</span>' : '')}
   </div>
   ${post.isSecured && authUser
     ? `<button class="btn btn-xs btn-secondary" style="margin-top: 6px;" onclick="unsecurePost('${post.id}')">🔓 Remove Secure</button>`
@@ -296,13 +296,21 @@ function tick() {
 
   // Post cooldowns
   gs.posts.forEach(post => {
+    const rem = Math.max(0, post.cooldownEndsAt - now);
+    
+    if (post.isSecured) {
+      const secBadge = document.getElementById(`sec-badge-${post.id}`);
+      if (secBadge && rem > 0) {
+        secBadge.innerHTML = `🔒 Secured (⏳ ${fmtTime(rem)})`;
+      }
+    }
+
     const cdEl = document.getElementById(`cd-${post.id}`);
     if (!cdEl) return;
-    const rem = Math.max(0, post.cooldownEndsAt - now);
-    if (rem === 0) {
+    if (rem === 0 && !post.isSecured) {
       const wrap = document.getElementById(`cd-wrap-${post.id}`);
       if (wrap) wrap.innerHTML = '<span class="capturable-badge">✅ Capturable</span>';
-    } else {
+    } else if (!post.isSecured) {
       cdEl.textContent = `⏳ ${fmtTime(rem)}`;
     }
   });

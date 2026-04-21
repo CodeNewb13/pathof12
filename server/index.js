@@ -109,7 +109,22 @@ app.delete('/auth/accounts/:id', requireAdmin, (req, res) => {
 // Server-side payout timer check
 setInterval(() => {
   const s = game.getState();
-  if (!s.timerPaused && Date.now() >= s.nextPayoutAt) {
+  let changed = false;
+
+  const now = Date.now();
+  for (const post of s.posts) {
+    if (post.isSecured && post.cooldownEndsAt && now >= post.cooldownEndsAt) {
+      post.isSecured = false;
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    game.save();
+    broadcast();
+  }
+
+  if (!s.timerPaused && now >= s.nextPayoutAt) {
     game.processPayout();
     broadcast();
   }
