@@ -447,13 +447,8 @@ function customAdjust(teamId) {
 }
 
 function confirmResetGame() {
-  confirmAction('⚠️ RESET ALL GAME DATA to defaults? This fully resets posts, points, teams, and the timer. Timer will also be paused.',
+  confirmAction('⚠️ RESET ALL GAME DATA? This cannot be undone!',
     () => socket.emit('resetGame'));
-}
-
-function confirmResetPoints() {
-  confirmAction('⚠️ Reset Points? This resets all team points to 0 and pauses/restarts the timer to its default payout interval.',
-    () => socket.emit('resetPoints'));
 }
 
 // ── Settings ─────────────────────────────────────────────────────
@@ -469,53 +464,34 @@ function openSettings() {
         <div class="settings-section" style="flex:1;min-width:260px">
           <h3>Game Timings (Minutes)</h3>
           <label>Payout Interval <input type="number" id="set-payout" value="${s.payoutInterval}"></label>
-            <div style="font-size:0.75rem; color:var(--text-muted); margin-top:-4px; margin-bottom:12px;">Frequency of points given for owned posts.</div>
-
-            <label>Post Cooldown <input type="number" id="set-post-cap-cd" value="${postCd.capture}"></label>
-            <div style="font-size:0.75rem; color:var(--text-muted); margin-top:-4px; margin-bottom:12px;">Immunity time after a post is normally captured.</div>
-
-            <label>Secure Duration <input type="number" id="set-post-sec-cd" value="${postCd.secure}"></label>
-            <div style="font-size:0.75rem; color:var(--text-muted); margin-top:-4px; margin-bottom:12px;">Immunity time when a team manually Secures a post.</div>
-            
-            <h3 style="margin-top:16px;">Team Action Cooldowns (Minutes)</h3>
-            <div style="font-size:0.8rem; color:var(--text-muted); margin-bottom:8px;">Time team must wait to reuse an ability (0 = instant).</div>
-            <label>Capture Ability <input type="number" id="set-tcd-cap" value="${actCd.capture}"></label>
-            <label>Steal Ability <input type="number" id="set-tcd-steal" value="${actCd.steal}"></label>
-            <label>Secure Ability <input type="number" id="set-tcd-sec" value="${actCd.secure}"></label>
-            <label>Shield Ability <input type="number" id="set-tcd-shield" value="${actCd.shield}"></label>
-            <label>Break Shield Ability <input type="number" id="set-tcd-bs" value="${actCd.breakShield}"></label>
-            <label>Seek Ability <input type="number" id="set-tcd-seek" value="${actCd.seek}"></label>
-            
-            <h3 style="margin-top:16px;">Point Tier Values</h3>
-            <label>High Tier <input type="number" id="set-high-tier" value="${tv.high}"></label>
-            <label>Low Tier <input type="number" id="set-low-tier" value="${tv.low}"></label>
+          <label>Post Capture Cooldown <input type="number" id="set-post-cap-cd" value="${postCd.capture}"></label>
+          <label>Post Secure Cooldown <input type="number" id="set-post-sec-cd" value="${postCd.secure}"></label>
+          
+          <h3 style="margin-top:16px;">Team Action Cooldowns (Minutes)</h3>
+          <label>Capture Cooldown <input type="number" id="set-tcd-cap" value="${actCd.capture}"></label>
+          <label>Steal Cooldown <input type="number" id="set-tcd-steal" value="${actCd.steal}"></label>
+          <label>Secure Cooldown <input type="number" id="set-tcd-sec" value="${actCd.secure}"></label>
+          <label>Shield Cooldown <input type="number" id="set-tcd-shield" value="${actCd.shield}"></label>
+          <label>Break Shield Cooldown <input type="number" id="set-tcd-bs" value="${actCd.breakShield}"></label>
+          <label>Seek Cooldown <input type="number" id="set-tcd-seek" value="${actCd.seek}"></label>
+  
+          <h3 style="margin-top:16px;">Point Tier Values</h3>
+          <label>High Tier <input type="number" id="set-high-tier" value="${tv.high}" disabled title="Admin edits via board directly if needed"></label>
+          <label>Low Tier <input type="number" id="set-low-tier" value="${tv.low}" disabled></label>
         </div>
         <div class="settings-section" style="flex:1;min-width:260px">
           <h3>Action Costs</h3>
-            <div style="font-size:0.8rem; color:var(--text-muted); margin-bottom:8px;">Cost for abilities. Secure Cost is a percentage (1-100) of the post's base value.</div>
-            <label>Capture Point Cost <input type="number" id="set-cost-cap" value="${s.costs.capture || 0}"></label>
-            <label>Steal Point Cost <input type="number" id="set-cost-steal" value="${s.costs.steal}"></label>
-            <label>Secure Cost (%) <input type="number" id="set-cost-sec" value="${s.costs.secure ?? 50}"></label>
-            <label>Shield Point Cost <input type="number" id="set-cost-safe" value="${s.costs.safe}"></label>
-            <label>Break Shield Point Cost <input type="number" id="set-cost-bs" value="${s.costs.breakSafe}"></label>
-            <label>Seek Point Cost <input type="number" id="set-cost-seek" value="${s.costs.seek || 0}"></label>
+          <label>Steal Cost <input type="number" id="set-cost-steal" value="${s.costs.steal}"></label>
+          <label>Shield Cost <input type="number" id="set-cost-safe" value="${s.costs.safe}"></label>
+          <label>Break Shield Cost <input type="number" id="set-cost-bs" value="${s.costs.breakSafe}"></label>
   
           <h3 style="margin-top:16px;">Teams Config</h3>
           <div id="set-teams-list" style="display:flex;flex-direction:column;gap:8px">
             ${s.teams.map(t => `
               <div class="team-edit-row" data-id="${t.id}" style="display:flex; gap:8px">
                 <input type="text" class="t-name" value="${escHtml(t.name)}" style="flex:1">
-                <input type="color" class="t-color" value="${t.color}">
-                <button class="btn btn-xs btn-danger" onclick="this.parentElement.remove()">✕</button>
-              </div>
-            `).join('')}
-          </div>
-          <button class="btn btn-sm btn-success" style="margin-top:8px;" onclick="addTeamRow()">+ Add Team</button>
-        </div>
-      </div>
-    `;
-    document.getElementById('settings-body').innerHTML = html;
-    document.getElementById('settings-modal').classList.remove('hidden');
+  document.getElementById('settings-body').innerHTML = html;
+  document.getElementById('settings-modal').classList.remove('hidden');
 }
 
 function addTeamRow() {
@@ -531,9 +507,6 @@ function addTeamRow() {
 }
 
 function saveSettings() {
-  const getInt = (id, def) => { const v = document.getElementById(id).value; return v === '' ? def : parseInt(v); };
-  const getFloat = (id, def) => { const v = document.getElementById(id).value; return v === '' ? def : parseFloat(v); };
-
   const teams = [];
   document.querySelectorAll('.team-edit-row').forEach(row => {
     teams.push({
@@ -544,30 +517,23 @@ function saveSettings() {
   });
 
   const payload = {
-    payoutInterval: getInt('set-payout', 30),
+    payoutInterval: parseInt(document.getElementById('set-payout').value) || 30,
     postCooldowns: {
-      capture: getFloat('set-post-cap-cd', 5),
-      secure: getFloat('set-post-sec-cd', 10)
+      capture: parseFloat(document.getElementById('set-post-cap-cd').value) || 5,
+      secure: parseFloat(document.getElementById('set-post-sec-cd').value) || 10
     },
     actionCooldowns: {
-      capture: getFloat('set-tcd-cap', 0),
-      steal: getFloat('set-tcd-steal', 0),
-      secure: getFloat('set-tcd-sec', 0),
-      shield: getFloat('set-tcd-shield', 0),
-      breakShield: getFloat('set-tcd-bs', 0),
-      seek: getFloat('set-tcd-seek', 0)
+      capture: parseFloat(document.getElementById('set-tcd-cap').value) || 0,
+      steal: parseFloat(document.getElementById('set-tcd-steal').value) || 0,
+      secure: parseFloat(document.getElementById('set-tcd-sec').value) || 0,
+      shield: parseFloat(document.getElementById('set-tcd-shield').value) || 0,
+      breakShield: parseFloat(document.getElementById('set-tcd-bs').value) || 0,
+      seek: parseFloat(document.getElementById('set-tcd-seek').value) || 0
     },
     costs: {
-      capture: getInt('set-cost-cap', 0),
-      steal: getInt('set-cost-steal', 50),
-      secure: getInt('set-cost-sec', 50),
-      safe: getInt('set-cost-safe', 40),
-      breakSafe: getInt('set-cost-bs', 80),
-      seek: getInt('set-cost-seek', 0)
-    },
-    tierValues: {
-      high: getInt('set-high-tier', 50),
-      low: getInt('set-low-tier', 30)
+      steal: parseInt(document.getElementById('set-cost-steal').value) || 50,
+      safe: parseInt(document.getElementById('set-cost-safe').value) || 40,
+      breakSafe: parseInt(document.getElementById('set-cost-bs').value) || 80
     },
     teams
   };

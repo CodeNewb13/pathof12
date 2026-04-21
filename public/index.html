@@ -18,45 +18,61 @@
         <span class="payout-label">Next payout in:</span>
         <span id="payout-countdown" class="payout-countdown">--:--</span>
       </div>
-      <div class="payout-actions">
+      <div class="payout-actions admin-only hidden">
         <button class="btn btn-warning btn-sm" onclick="triggerPayout()">💰 Payout Now</button>
         <button id="pause-btn" class="btn btn-secondary btn-sm" onclick="togglePause()">⏸ Pause</button>
         <button class="btn btn-secondary btn-sm" onclick="resetTimer()">🔄 Reset Timer</button>
       </div>
     </div>
-    <div class="header-right">
+    <div class="header-right" id="auth-area">
+      <!-- auth area injected automatically -->
+    </div>
+    <div class="header-right admin-only hidden" style="display:flex;gap:8px;">
       <button id="edit-mode-btn" class="btn btn-secondary btn-sm" onclick="toggleEditMode()">✏️ Edit Mode</button>
       <button class="btn btn-primary btn-sm" onclick="openSettings()">⚙️ Settings</button>
-      <button class="btn btn-danger btn-sm" onclick="confirmResetGame()">🗑️ Reset</button>
+      <button class="btn btn-warning btn-sm" onclick="confirmResetPoints()" title="Reset just team points and timer">🔄 Reset Points</button>
+      <button class="btn btn-danger btn-sm" title="Reset whole game back to defaults" onclick="confirmResetGame()">🗑️ Reset All</button>
     </div>
   </header>
 
   <!-- Main Content -->
-  <main id="main-content">
-    <!-- Post Board -->
-    <section id="posts-section">
-      <h2 class="section-title">📍 Post Board</h2>
-      <div id="posts-grid" class="posts-grid">
-        <div class="loading">Connecting…</div>
-      </div>
-    </section>
+  <div style="display:flex;">
+    <main id="main-content" style="flex:3;">
+      <!-- Post Board -->
+      <section id="posts-section">
+        <h2 class="section-title">📍 Post Board</h2>
+        <div id="posts-grid" class="posts-grid">
+          <div class="loading">Connecting…</div>
+        </div>
+      </section>
 
-    <!-- Teams -->
-    <section id="teams-section">
-      <h2 class="section-title">👥 Teams</h2>
-      <div id="teams-grid" class="teams-grid">
-        <div class="loading">Connecting…</div>
-      </div>
-    </section>
-  </main>
+      <!-- Teams -->
+      <section id="teams-section">
+        <h2 class="section-title">👥 Teams</h2>
+        <div id="teams-grid" class="teams-grid">
+          <div class="loading">Connecting…</div>
+        </div>
+      </section>
+    </main>
 
-  <!-- Event Log -->
-  <section id="log-section">
-    <h2 class="section-title">📋 Event Log</h2>
-    <div id="event-log" class="event-log">
-      <p class="log-empty">No events yet.</p>
-    </div>
-  </section>
+    <aside style="flex:1; padding: 16px; border-left: 1px solid var(--border); display: flex; flex-direction: column; gap: 20px;">
+      <!-- Requests Stack -->
+      <section id="requests-section" class="hidden">
+        <h2 class="section-title">🕒 Pending Requests</h2>
+        <div id="requests-list" style="display:flex; flex-direction: column; gap: 10px;">
+          <!-- dynamically populated -->
+        </div>
+      </section>
+
+      <!-- Event Log -->
+      <section id="log-section">
+        <h2 class="section-title">📋 Event Log</h2>
+        <div id="event-log" class="event-log">
+          <p class="log-empty">No events yet.</p>
+        </div>
+      </section>
+    </aside>
+  </div>
 
   <!-- Settings Modal -->
   <div id="settings-modal" class="modal hidden" onclick="modalBackdropClick(event,'settings-modal')">
@@ -111,6 +127,47 @@
       <div class="modal-footer">
         <button id="confirm-ok" class="btn btn-danger">✔ Confirm</button>
         <button class="btn btn-secondary" onclick="closeConfirm()">✕ Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Accounts Modal -->
+  <div id="accounts-modal" class="modal hidden" onclick="modalBackdropClick(event,'accounts-modal')">
+    <div class="modal-content modal-md">
+      <div class="modal-header">
+        <h2>👥 System Accounts</h2>
+        <button class="modal-close" onclick="closeAccountsModal()">✕</button>
+      </div>
+      <div class="modal-body" id="accounts-body"></div>
+      <div class="modal-footer">
+        <input type="text" id="new-admin-user" placeholder="Username" class="adjust-input" style="width:100px;margin-right:4px">
+        <input type="password" id="new-admin-pass" placeholder="Password" class="adjust-input" style="width:100px;margin-right:4px">
+        <select id="new-admin-role" class="adjust-input" style="width:80px;margin-right:8px">
+          <option value="admin">Admin</option>
+          <option value="helper">Helper</option>
+        </select>
+        <button class="btn btn-success" onclick="addAccount()">➕ Add Account</button>
+        <button class="btn btn-secondary" onclick="closeAccountsModal()" style="margin-left:auto">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Login Modal -->
+  <div id="login-modal" class="modal hidden">
+    <div class="modal-content modal-sm">
+      <div class="modal-header">
+        <h2>🔐 Admin Login</h2>
+        <button class="modal-close" onclick="closeLoginModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div style="display:flex;flex-direction:column;gap:12px">
+          <input type="text" id="login-username" class="adjust-input" placeholder="Username" onkeydown="if(event.key==='Enter') submitLogin()">
+          <input type="password" id="login-password" class="adjust-input" placeholder="Password" onkeydown="if(event.key==='Enter') submitLogin()">
+          <p id="login-error" style="color:var(--danger);font-size:0.85rem;display:none;margin:0"></p>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-success" onclick="submitLogin()" style="width:100%">Login</button>
       </div>
     </div>
   </div>

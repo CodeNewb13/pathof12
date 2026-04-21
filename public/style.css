@@ -101,6 +101,9 @@ h1, h2, h3, h4 { font-weight: 600; }
 .post-group-40 { border-color: #7d4f00; background: rgba(210,153,34,0.06); }
 .post-group-30 { border-color: #1a3a5c; background: rgba(52,152,219,0.06); }
 
+.post-group-high { border-color: #c0392b; background: rgba(192,57,43,0.06); }
+.post-group-low { border-color: #1a3a5c; background: rgba(52,152,219,0.06); }
+
 .post-group-header {
   display: flex;
   align-items: center;
@@ -124,6 +127,9 @@ h1, h2, h3, h4 { font-weight: 600; }
 .post-group-40 .post-group-label { color: var(--yellow); }
 .post-group-30 .post-group-label { color: var(--blue); }
 
+.post-group-high .post-group-label { color: #e74c3c; }
+.post-group-low .post-group-label { color: var(--blue); }
+
 .post-group-actions {
   display: flex;
   gap: 4px;
@@ -133,6 +139,33 @@ h1, h2, h3, h4 { font-weight: 600; }
 
 @media (max-width: 900px) {
   .posts-groups { flex-direction: column; }
+}
+
+/* ── Circular Post Layout ────────────────────────────────────── */
+.posts-circular {
+  position: relative;
+  width: 100%;
+  min-height: calc(var(--count) * 60px + 280px);
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.posts-circular .post-card {
+  position: absolute;
+  width: 220px;
+  /* Centering from origin */
+  margin: -60px 0 0 -110px;
+  /* Math transform to place in circle */
+  transform: rotate(var(--angle)) translate(var(--radius)) rotate(calc(-1 * var(--angle)));
+  z-index: 2;
+  background: var(--bg2);
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px;
+  transition: border-color 0.2s, background 0.2s, transform 0.3s;
+  display: flex; flex-direction: column; gap: 6px;
 }
 
 /* ── Post Grid ────────────────────────────────────────────────── */
@@ -269,7 +302,7 @@ select.action-select option { background: var(--bg3); }
   display: flex; align-items: center; justify-content: center;
   z-index: 500; padding: 16px;
 }
-.modal.hidden { display: none; }
+.hidden { display: none !important; }
 
 .modal-content {
   background: var(--bg2); border: 1px solid var(--border);
