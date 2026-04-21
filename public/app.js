@@ -156,7 +156,7 @@ function teamCard(team) {
 
       <!-- Capture -->
       <div class="action-row">
-        <button class="btn btn-success btn-xs" onclick="capturePost('${team.id}')">🚩 Capture</button>
+        <button id="btn-capture-${team.id}" class="btn btn-success btn-xs" data-orig="🚩 Capture" onclick="capturePost('${team.id}')">🚩 Capture</button>
         <select class="action-select" id="cap-${team.id}">
           <option value="">— select post —</option>
           ${availCapture.map(p => {
@@ -168,7 +168,7 @@ function teamCard(team) {
 
       <!-- Steal -->
       <div class="action-row">
-        <button class="btn btn-warning btn-xs" onclick="steal('${team.id}')">💸 Steal (${gs.settings.costs.steal}pts)</button>
+        <button id="btn-steal-${team.id}" class="btn btn-warning btn-xs" data-orig="💸 Steal (${gs.settings.costs.steal}pts)" onclick="steal('${team.id}')">💸 Steal (${gs.settings.costs.steal}pts)</button>
         <select class="action-select" id="steal-${team.id}">
           <option value="">— target team —</option>
           ${others.map(t => `<option value="${t.id}">${escHtml(t.name)} (${t.points}pts)${t.hasSafe ? ' 🛡️' : ''}</option>`).join('')}
@@ -177,7 +177,7 @@ function teamCard(team) {
 
       <!-- Secure -->
       <div class="action-row">
-        <button class="btn btn-info btn-xs" onclick="securePost('${team.id}')">🔒 Secure (50% pts)</button>
+        <button id="btn-secure-${team.id}" class="btn btn-info btn-xs" data-orig="🔒 Secure (50% pts)" onclick="securePost('${team.id}')"> 🔒 Secure (50% pts)</button>
         <select class="action-select" id="sec-${team.id}">
           <option value="">— select post —</option>
           ${ownedUnsecured.map(p => `<option value="${p.id}">${p.name}</option>`).join('')}
@@ -186,18 +186,9 @@ function teamCard(team) {
 
       <!-- Shield -->
       <div class="action-row">
-        <button class="btn btn-primary btn-xs" onclick="activateShield('${team.id}')" ${team.hasSafe ? 'disabled' : ''}>
-          🛡️ Shield (${gs.settings.costs.safe}pts)${team.hasSafe ? ' · Active' : ''}
+        <button id="btn-shield-${team.id}" class="btn btn-primary btn-xs" data-orig="🛡️ Shield (${gs.settings.costs.safe}pts)" onclick="activateShield('${team.id}')" ${team.hasSafe ? 'disabled' : ''}>
+          ${team.hasSafe ? '🛡️ Active' : `🛡️ Shield (${gs.settings.costs.safe}pts)`}
         </button>
-      </div>
-
-      <!-- Break Shield -->
-      <div class="action-row">
-        <button class="btn btn-danger btn-xs" onclick="breakShield('${team.id}')">⚔️ Break Shield (${gs.settings.costs.breakSafe}pts)</button>
-        <select class="action-select" id="bs-${team.id}">
-          <option value="">— immune team —</option>
-          ${others.filter(t => t.hasSafe).map(t => `<option value="${t.id}">${escHtml(t.name)}</option>`).join('')}
-        </select>
       </div>
     </div>
 
@@ -314,6 +305,30 @@ function tick() {
       cdEl.textContent = `⏳ ${fmtTime(rem)}`;
     }
   });
+
+  // Action cooldowns
+  gs.teams.forEach(t => {
+    ['capture', 'steal', 'secure', 'shield'].forEach(act => {
+      const btn = document.getElementById(`btn-${act}-${t.id}`);
+      if (btn) {
+        const cdEnds = t.cooldowns?.[act] || 0;
+        const rem = Math.max(0, cdEnds - now);
+        const orig = btn.dataset.orig || '';
+
+        // For shield, handle active state vs cooldown state
+        if (act === 'shield' && t.hasSafe) {
+          btn.textContent = '🛡️ Active';
+          btn.disabled = true;
+        } else if (rem > 0) {
+          btn.textContent = `${orig} (⏳ ${fmtTime(rem)})`;
+          btn.disabled = true;
+        } else {
+          btn.textContent = orig;
+          btn.disabled = false;
+        }
+      }
+    });
+  });
 }
 
 function fmtTime(ms) {
@@ -337,6 +352,14 @@ function steal(actingTeamId) {
   if (!targetId) { showToast('Select a target team', 'warn'); return; }
   const actor = gs.teams.find(t => t.id === actingTeamId);
   const target = gs.teams.find(t => t.id === targetId);
+  
+  if (target.hasSafe) {
+    const cost = gs.settings.costs.breakSafe || 80;
+    confirmAction(`Reminder: ${target.name} has a shield active, prompting steal will result in a shield break.\nCost: ${cost} pts from ${actor.name} to break shield. Proceed?`,
+      () => socket.emit('steal', { actingTeamId, targetTeamId: targetId }));
+    return;
+  }
+
   const approx = Math.floor(target.points * 0.3);
   const cost = gs.settings.costs.steal;
   confirmAction(`Steal ~${approx} pts from ${target.name}?\nCost: ${cost} pts from ${actor.name}`,
@@ -359,17 +382,6 @@ function activateShield(actingTeamId) {
   confirmAction(`Activate Shield (immunity) for ${team.name}?\nCost: ${cost} pts`,
     () => socket.emit('shield', { actingTeamId }));
 }
-
-function breakShield(actingTeamId) {
-  const targetId = document.getElementById(`bs-${actingTeamId}`).value;
-  if (!targetId) { showToast('No immune team selected', 'warn'); return; }
-  const actor = gs.teams.find(t => t.id === actingTeamId);
-  const target = gs.teams.find(t => t.id === targetId);
-  const cost = gs.settings.costs.breakSafe;
-  confirmAction(`Break ${target.name}'s immunity?\nCost: ${cost} pts from ${actor.name}`,
-    () => socket.emit('breakShield', { actingTeamId, targetTeamId: targetId }));
-}
-
 
 function seek(actingTeamId) {
   const t1 = document.getElementById(`seek1-${actingTeamId}`).value;
@@ -491,7 +503,6 @@ function openSettings() {
             <label>Steal Ability <input type="number" id="set-tcd-steal" value="${actCd.steal}"></label>
             <label>Secure Ability <input type="number" id="set-tcd-sec" value="${actCd.secure}"></label>
             <label>Shield Ability <input type="number" id="set-tcd-shield" value="${actCd.shield}"></label>
-            <label>Break Shield Ability <input type="number" id="set-tcd-bs" value="${actCd.breakShield}"></label>
             <label>Seek Ability <input type="number" id="set-tcd-seek" value="${actCd.seek}"></label>
             
             <h3 style="margin-top:16px;">Point Tier Values</h3>
@@ -505,7 +516,7 @@ function openSettings() {
             <label>Steal Point Cost <input type="number" id="set-cost-steal" value="${s.costs.steal}"></label>
             <label>Secure Cost (%) <input type="number" id="set-cost-sec" value="${s.costs.secure ?? 50}"></label>
             <label>Shield Point Cost <input type="number" id="set-cost-safe" value="${s.costs.safe}"></label>
-            <label>Break Shield Point Cost <input type="number" id="set-cost-bs" value="${s.costs.breakSafe}"></label>
+            <label>Break Shield Point Cost <input type="number" id="set-cost-bs" value="${s.costs.breakSafe || 80}"></label>
             <label>Seek Point Cost <input type="number" id="set-cost-seek" value="${s.costs.seek || 0}"></label>
   
           <h3 style="margin-top:16px;">Teams Config</h3>
@@ -562,7 +573,6 @@ function saveSettings() {
       steal: getFloat('set-tcd-steal', 0),
       secure: getFloat('set-tcd-sec', 0),
       shield: getFloat('set-tcd-shield', 0),
-      breakShield: getFloat('set-tcd-bs', 0),
       seek: getFloat('set-tcd-seek', 0)
     },
     costs: {

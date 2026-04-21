@@ -5,7 +5,7 @@ const POST_NAMES = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
 
 const DEFAULT_SETTINGS = {
   postCooldowns: { capture: 5, secure: 10 },
-  actionCooldowns: { capture: 0, steal: 5, secure: 0, shield: 0, breakShield: 0, seek: 0 },
+  actionCooldowns: { capture: 0, steal: 5, secure: 0, shield: 0, seek: 0 },
   payoutInterval: 30,
   costs: { steal: 50, safe: 40, breakSafe: 80, capture: 0, secure: 50, seek: 0 },
   tierValues: { high: 50, low: 30 },
@@ -19,7 +19,7 @@ function createDefaultState() {
   const now = Date.now();
   return {
     settings: JSON.parse(JSON.stringify(DEFAULT_SETTINGS)),
-    teams: DEFAULT_SETTINGS.teams.map(t => ({ ...t, points: 0, hasSafe: false, cooldowns: { capture: 0, steal: 0, secure: 0, shield: 0, breakShield: 0, seek: 0 } })),
+    teams: DEFAULT_SETTINGS.teams.map(t => ({ ...t, points: 0, hasSafe: false, cooldowns: { capture: 0, steal: 0, secure: 0, shield: 0, seek: 0 } })),
     posts: POST_NAMES.map((name, i) => ({
       id: `post_${name}`,
       name: `Post ${name}`,
@@ -197,7 +197,18 @@ class GameState {
     const cdCheck = this.checkTeamCooldown(actingTeamId, 'steal');
     if (!cdCheck.success) return cdCheck;
 
-    if (target.hasSafe) return { success: false, error: `${target.name} has immunity. Use Break Shield first.` };
+    if (target.hasSafe) {
+      const shieldCost = this.state.settings.costs.breakSafe || 80;
+      if (actor.points < shieldCost) return { success: false, error: `Not enough points to break shield (need ${shieldCost}, have ${actor.points})` };
+      
+      actor.points -= shieldCost;
+      target.hasSafe = false;
+
+      this.log(`${actor.name} broke ${target.name}'s shield with Steal (cost: ${shieldCost} pts)`);
+      this.applyTeamCooldown(actingTeamId, 'steal');
+      this.save();
+      return { success: true };
+    }
 
     const cost = this.state.settings.costs.steal;
     if (actor.points < cost) return { success: false, error: `Not enough points (need ${cost}, have ${actor.points})` };
@@ -257,28 +268,6 @@ class GameState {
 
     this.log(`${actor.name} activated Shield (immunity) (cost: ${cost} pts)`);
     this.applyTeamCooldown(actingTeamId, 'shield');
-    this.save();
-    return { success: true };
-  }
-
-  breakShield(actingTeamId, targetTeamId) {
-    const actor = this.getTeam(actingTeamId);
-    const target = this.getTeam(targetTeamId);
-    if (!actor || !target) return { success: false, error: 'Team not found' };
-    
-    const cdCheck = this.checkTeamCooldown(actingTeamId, 'breakShield');
-    if (!cdCheck.success) return cdCheck;
-
-    if (!target.hasSafe) return { success: false, error: `${target.name} does not have immunity` };
-
-    const cost = this.state.settings.costs.breakSafe;
-    if (actor.points < cost) return { success: false, error: `Not enough points (need ${cost}, have ${actor.points})` };
-
-    actor.points -= cost;
-    target.hasSafe = false;
-
-    this.log(`${actor.name} broke ${target.name}'s immunity (Break Shield) (cost: ${cost} pts)`);
-    this.applyTeamCooldown(actingTeamId, 'breakShield');
     this.save();
     return { success: true };
   }

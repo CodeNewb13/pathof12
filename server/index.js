@@ -13,13 +13,15 @@ const server = http.createServer(app);
 const io = new Server(server);
 
 // Initialize Redis client for Railway/Production sessions
+const redisUrl = process.env.REDIS_URL || 'redis://127.0.0.1:6379';
 const redisClient = createClient({
-  url: process.env.REDIS_URL || 'redis://localhost:6379'
+  url: redisUrl,
+  socket: redisUrl.startsWith('rediss://') ? { tls: true, rejectUnauthorized: false } : undefined
 });
 
-redisClient.on('error', (err) => console.error('Redis Client Error', err));
+redisClient.on('connect', () => console.log('🟢 Connected to Redis'));
+redisClient.on('error', (err) => console.error('🔴 Redis Client Error', err));
 redisClient.connect().catch(console.error);
-
 const sessionMiddleware = session({
   store: new RedisStore({
     client: redisClient,
@@ -27,8 +29,12 @@ const sessionMiddleware = session({
   }),
   secret: process.env.SESSION_SECRET || 'ctf-secret-key',
   resave: false,
-  saveUninitialized: true,
-  cookie: { httpOnly: true, maxAge: 24 * 60 * 60 * 1000 }
+  saveUninitialized: false,
+  cookie: {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 24 * 60 * 60 * 1000 
+  }
 });
 
 app.use(sessionMiddleware);
@@ -190,7 +196,6 @@ io.on('connection', (socket) => {
   socket.on('steal', ({ actingTeamId, targetTeamId }) => gameAction('Steal', `${tn(actingTeamId)} steals from ${tn(targetTeamId)}`, () => game.steal(actingTeamId, targetTeamId)));
   socket.on('secure', ({ actingTeamId, postId }) => gameAction('Secure Post', `${tn(actingTeamId)} secures ${pn(postId)}`, () => game.secure(actingTeamId, postId)));
   socket.on('shield', ({ actingTeamId }) => gameAction('Shield', `${tn(actingTeamId)} shields`, () => game.shield(actingTeamId)));
-  socket.on('breakShield', ({ actingTeamId, targetTeamId }) => gameAction('Break Shield', `${tn(actingTeamId)} breaks ${tn(targetTeamId)}`, () => game.breakShield(actingTeamId, targetTeamId)));
   socket.on('seek', ({ actingTeamId, targetTeamId1, targetTeamId2 }) => gameAction('Seek', `${tn(actingTeamId)} seeks ${tn(targetTeamId1)}, ${tn(targetTeamId2)}`, () => game.seek(actingTeamId, targetTeamId1, targetTeamId2)));
   socket.on('adjustPoints', ({ teamId, amount }) => gameAction('Adjust Points', `${tn(teamId)} by ${amount}`, () => game.adjustPoints(teamId, amount)));
 
