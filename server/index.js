@@ -3,6 +3,8 @@ const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
 const session = require('express-session');
+const { RedisStore } = require('connect-redis');
+const { createClient } = require('redis');
 const GameState = require('./gameState');
 const AdminStore = require('./adminStore');
 
@@ -10,7 +12,19 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
+// Initialize Redis client for Railway/Production sessions
+const redisClient = createClient({
+  url: process.env.REDIS_URL || 'redis://localhost:6379'
+});
+
+redisClient.on('error', (err) => console.error('Redis Client Error', err));
+redisClient.connect().catch(console.error);
+
 const sessionMiddleware = session({
+  store: new RedisStore({
+    client: redisClient,
+    prefix: 'ctfapp:',
+  }),
   secret: process.env.SESSION_SECRET || 'ctf-secret-key',
   resave: false,
   saveUninitialized: true,
@@ -153,14 +167,17 @@ io.on('connection', (socket) => {
     else broadcast();
   }
 
+  const tn = (tid) => game.state.teams.find(t => t.id === tid)?.name || tid;
+  const pn = (pid) => game.state.posts.find(p => p.id === pid)?.name || pid;
+
   // Helper or Admin actions
-  socket.on('capturePost', ({ postId, teamId }) => gameAction('Capture Post', `Team ${teamId} -> Post ${postId}`, () => game.capturePost(postId, teamId)));
-  socket.on('steal', ({ actingTeamId, targetTeamId }) => gameAction('Steal', `Team ${actingTeamId} steals from ${targetTeamId}`, () => game.steal(actingTeamId, targetTeamId)));
-  socket.on('secure', ({ actingTeamId, postId }) => gameAction('Secure Post', `Team ${actingTeamId} secures ${postId}`, () => game.secure(actingTeamId, postId)));
-  socket.on('shield', ({ actingTeamId }) => gameAction('Shield', `Team ${actingTeamId} shields`, () => game.shield(actingTeamId)));
-  socket.on('breakShield', ({ actingTeamId, targetTeamId }) => gameAction('Break Shield', `Team ${actingTeamId} breaks ${targetTeamId}`, () => game.breakShield(actingTeamId, targetTeamId)));
-  socket.on('seek', ({ actingTeamId, targetTeamId1, targetTeamId2 }) => gameAction('Seek', `Team ${actingTeamId} seeks ${targetTeamId1}, ${targetTeamId2}`, () => game.seek(actingTeamId, targetTeamId1, targetTeamId2)));
-  socket.on('adjustPoints', ({ teamId, amount }) => gameAction('Adjust Points', `Team ${teamId} by ${amount}`, () => game.adjustPoints(teamId, amount)));
+  socket.on('capturePost', ({ postId, teamId }) => gameAction('Capture Post', `${tn(teamId)} -> ${pn(postId)}`, () => game.capturePost(postId, teamId)));
+  socket.on('steal', ({ actingTeamId, targetTeamId }) => gameAction('Steal', `${tn(actingTeamId)} steals from ${tn(targetTeamId)}`, () => game.steal(actingTeamId, targetTeamId)));
+  socket.on('secure', ({ actingTeamId, postId }) => gameAction('Secure Post', `${tn(actingTeamId)} secures ${pn(postId)}`, () => game.secure(actingTeamId, postId)));
+  socket.on('shield', ({ actingTeamId }) => gameAction('Shield', `${tn(actingTeamId)} shields`, () => game.shield(actingTeamId)));
+  socket.on('breakShield', ({ actingTeamId, targetTeamId }) => gameAction('Break Shield', `${tn(actingTeamId)} breaks ${tn(targetTeamId)}`, () => game.breakShield(actingTeamId, targetTeamId)));
+  socket.on('seek', ({ actingTeamId, targetTeamId1, targetTeamId2 }) => gameAction('Seek', `${tn(actingTeamId)} seeks ${tn(targetTeamId1)}, ${tn(targetTeamId2)}`, () => game.seek(actingTeamId, targetTeamId1, targetTeamId2)));
+  socket.on('adjustPoints', ({ teamId, amount }) => gameAction('Adjust Points', `${tn(teamId)} by ${amount}`, () => game.adjustPoints(teamId, amount)));
 
   // Queue Approval/Reject actions
   socket.on('approveRequest', ({ id }) => verifyAdmin(() => game.approveRequest(id)));
@@ -173,12 +190,12 @@ io.on('connection', (socket) => {
   socket.on('resetTimer', () => gameAction('Reset Timer', '', () => { game.resetPayoutTimer(); return { success: true }; }));
   socket.on('pauseTimer', () => gameAction('Pause Timer', '', () => game.pauseTimer()));
   socket.on('resumeTimer', () => gameAction('Resume Timer', '', () => game.resumeTimer()));
-  socket.on('unsecurePost', ({ postId }) => gameAction('Unsecure Post', `Post ${postId}`, () => game.unsecurePost(postId)));
-  socket.on('removeShield', ({ teamId }) => gameAction('Remove Shield', `Team ${teamId}`, () => game.removeShield(teamId)));
+  socket.on('unsecurePost', ({ postId }) => gameAction('Unsecure Post', `${pn(postId)}`, () => game.unsecurePost(postId)));
+  socket.on('removeShield', ({ teamId }) => gameAction('Remove Shield', `${tn(teamId)}`, () => game.removeShield(teamId)));
   socket.on('updateSettings', (settings) => gameAction('Update Settings', 'Global Settings', () => { game.updateSettings(settings); return { success: true }; }));
   socket.on('addPost', ({ tier }) => gameAction('Add Post', `${tier} tier`, () => game.addPost(tier)));
-  socket.on('deletePost', ({ postId }) => gameAction('Delete Post', `Post ${postId}`, () => game.deletePost(postId)));
-  socket.on('renamePost', ({ postId, newName }) => gameAction('Rename Post', `Post ${postId} -> ${newName}`, () => game.renamePost(postId, newName)));
+  socket.on('deletePost', ({ postId }) => gameAction('Delete Post', `${pn(postId)}`, () => game.deletePost(postId)));
+  socket.on('renamePost', ({ postId, newName }) => gameAction('Rename Post', `${pn(postId)} -> ${newName}`, () => game.renamePost(postId, newName)));
   socket.on('setTierValue', ({ tier, newValue }) => gameAction('Set Tier Value', `${tier} -> ${newValue}`, () => game.setTierValue(tier, newValue)));
   socket.on('resetGame', () => gameAction('Reset Game', '', () => { game.resetGame(); return { success: true }; }));
   socket.on('resetPoints', () => gameAction('Reset Points', '', () => { game.resetPoints(); return { success: true }; }));
