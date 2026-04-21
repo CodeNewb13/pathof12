@@ -1,3 +1,5 @@
 node_modules/
 data/
 .env
+redis-local/
+Redis-x64-*.zip
