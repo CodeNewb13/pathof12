@@ -9,6 +9,10 @@ const GameState = require('./gameState');
 const AdminStore = require('./adminStore');
 
 const app = express();
+
+// Required so secure cookies send over reverse proxies like Railway
+app.set('trust proxy', 1);
+
 const server = http.createServer(app);
 const io = new Server(server);
 
