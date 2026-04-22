@@ -48,17 +48,20 @@ function renderPosts() {
   const allPosts = gs.posts || [];
   const radius = allPosts.length <= 1 ? 0 : Math.max(160, allPosts.length * 45); // adjusted spacing
   const minHeight = allPosts.length === 0 ? '50px' : (radius * 2 + 150) + 'px';
+  const boardActions = editMode
+    ? `
+      <button class="btn btn-sm btn-danger" onclick="addPost('high')" style="background:#8b0000">+ Add High Value</button>
+      <button class="btn btn-sm btn-info" onclick="addPost('low')" style="background:#004080">+ Add Low Value</button>
+    `
+    : '';
+
+  const actionsEl = document.getElementById('post-board-actions');
+  if (actionsEl) actionsEl.innerHTML = boardActions;
 
   document.getElementById('posts-grid').innerHTML = `
     <div class="posts-groups" style="justify-content:center">
       <div class="post-group" style="width: 100%; border:none; padding:0; display:flex; flex-direction:column; align-items:center;">
-        <div class="post-group-actions" style="margin-bottom: 24px; display:flex; gap:12px; justify-content:center; z-index:10;">
-          ${editMode ? `
-            <button class="btn btn-sm btn-danger" onclick="addPost('high')" style="background:#8b0000">+ Add High Value</button>
-            <button class="btn btn-sm btn-info" onclick="addPost('low')" style="background:#004080">+ Add Low Value</button>
-          ` : ''}
-        </div>
-        <div class="posts-circular" style="--count: ${allPosts.length}; min-height: ${minHeight}">
+        <div class="posts-circular" style="--count: ${allPosts.length}; min-height: ${minHeight}; margin-top: 28px;">
           ${allPosts.map((p, i) => postCard(p, editMode, i, allPosts.length)).join('')}
           ${allPosts.length === 0 ? '<div style="color:var(--text-muted);font-size:0.8rem;padding:6px;text-align:center">No posts</div>' : ''}
         </div>
@@ -128,6 +131,9 @@ function teamCard(team) {
   const isHelper = authUser && authUser.role === 'helper';
   const others = gs.teams.filter(t => t.id !== team.id);
   const ownedUnsecured = gs.posts.filter(p => p.owningTeamId === team.id && !p.isSecured);
+  const shieldRem = getShieldRemainingMs(team);
+  const shieldActive = shieldRem > 0;
+  const canSeek = others.length >= 2;
   const now = Date.now();
   const availCapture = gs.posts.filter(p => {
     const cd = p.cooldownEndsAt && now < p.cooldownEndsAt;
@@ -140,14 +146,15 @@ function teamCard(team) {
   <div class="team-header" style="background:${team.color}">
     <span>${escHtml(team.name)}</span>
     <div style="display:flex;gap:6px;align-items:center">
-      ${team.hasSafe ? '<span class="safe-badge">🛡️ Immune</span>' : ''}
-      ${isLogged && team.hasSafe ? `<button class="btn btn-xs btn-secondary" onclick="removeShield('${team.id}')">✕ Remove</button>` : ''}
+      ${shieldActive ? '<span class="safe-badge safe-badge-active">🛡️ Active</span>' : ''}
+      ${isLogged && shieldActive ? `<button class="btn btn-xs btn-secondary" onclick="removeShield('${team.id}')">✕ Remove</button>` : ''}
     </div>
   </div>
   <div class="team-body">
     <div class="team-points">
       <span class="points-label">Points:</span>
       <span class="points-value" style="color:${team.color}">${team.points}</span>
+      <span id="shield-chip-${team.id}" class="shield-chip${shieldActive ? '' : ' hidden'}">${shieldActive ? `🛡️ ${fmtTime(shieldRem)}` : ''}</span>
     </div>
 
     ${isLogged ? `
@@ -186,9 +193,22 @@ function teamCard(team) {
 
       <!-- Shield -->
       <div class="action-row">
-        <button id="btn-shield-${team.id}" class="btn btn-primary btn-xs" data-orig="🛡️ Shield (${gs.settings.costs.safe}pts)" onclick="activateShield('${team.id}')" ${team.hasSafe ? 'disabled' : ''}>
-          ${team.hasSafe ? '🛡️ Active' : `🛡️ Shield (${gs.settings.costs.safe}pts)`}
+        <button id="btn-shield-${team.id}" class="btn btn-primary btn-xs" data-orig="🛡️ Shield (${gs.settings.costs.safe}pts)" onclick="activateShield('${team.id}')" ${shieldActive ? 'disabled' : ''}>
+          🛡️ Shield (${gs.settings.costs.safe}pts)
         </button>
+      </div>
+
+      <!-- Seek -->
+      <div class="action-row">
+        <button id="btn-seek-${team.id}" class="btn btn-seek btn-xs" data-orig="🔎 Seek (${gs.settings.costs.seek || 0}pts)" onclick="seek('${team.id}')" ${canSeek ? '' : 'disabled'}>${canSeek ? `🔎 Seek (${gs.settings.costs.seek || 0}pts)` : '🔎 Seek (need 2 opponents)'}</button>
+        <select class="action-select" id="seek1-${team.id}" onchange="syncSeekTargets('${team.id}')" ${canSeek ? '' : 'disabled'}>
+          <option value="">— target team 1 —</option>
+          ${others.map(t => `<option value="${t.id}">${escHtml(t.name)} (${t.points}pts)</option>`).join('')}
+        </select>
+        <select class="action-select" id="seek2-${team.id}" ${canSeek ? '' : 'disabled'}>
+          <option value="">— target team 2 —</option>
+          ${others.map(t => `<option value="${t.id}">${escHtml(t.name)} (${t.points}pts)</option>`).join('')}
+        </select>
       </div>
     </div>
 
@@ -278,6 +298,11 @@ function tick() {
     pcEl.style.color = gs.timerPaused ? '#8b949e' : (rem < 60000 ? '#f85149' : '#f0c040');
   }
 
+  const roundsEl = document.getElementById('round-counter');
+  if (roundsEl) {
+    roundsEl.textContent = `Rounds: ${gs.roundCount || 0}`;
+  }
+
   // Pause button label
   const pauseBtn = document.getElementById('pause-btn');
   if (pauseBtn) {
@@ -308,17 +333,18 @@ function tick() {
 
   // Action cooldowns
   gs.teams.forEach(t => {
-    ['capture', 'steal', 'secure', 'shield'].forEach(act => {
+    ['capture', 'steal', 'secure', 'shield', 'seek'].forEach(act => {
       const btn = document.getElementById(`btn-${act}-${t.id}`);
       if (btn) {
         const cdEnds = t.cooldowns?.[act] || 0;
         const rem = Math.max(0, cdEnds - now);
         const orig = btn.dataset.orig || '';
+        const shieldRem = getShieldRemainingMs(t);
+        const shieldActive = shieldRem > 0;
 
-        // For shield, handle active state vs cooldown state
-        if (act === 'shield' && t.hasSafe) {
-          btn.textContent = '🛡️ Active';
-          btn.disabled = true;
+        if (act === 'shield') {
+          btn.textContent = orig;
+          btn.disabled = shieldActive || rem > 0;
         } else if (rem > 0) {
           btn.textContent = `${orig} (⏳ ${fmtTime(rem)})`;
           btn.disabled = true;
@@ -328,7 +354,39 @@ function tick() {
         }
       }
     });
+
+    const shieldChip = document.getElementById(`shield-chip-${t.id}`);
+    if (shieldChip) {
+      const shieldRem = getShieldRemainingMs(t);
+      if (shieldRem > 0) {
+        shieldChip.textContent = `🛡️ ${fmtTime(shieldRem)}`;
+        shieldChip.classList.remove('hidden');
+      } else {
+        shieldChip.classList.add('hidden');
+      }
+    }
   });
+}
+
+function getShieldRemainingMs(team) {
+  if (!team || !team.hasSafe || !team.safeEndsAt) return 0;
+  return Math.max(0, team.safeEndsAt - Date.now());
+}
+
+function syncSeekTargets(teamId) {
+  const first = document.getElementById(`seek1-${teamId}`);
+  const second = document.getElementById(`seek2-${teamId}`);
+  if (!first || !second) return;
+
+  const selectedFirst = first.value;
+  Array.from(second.options).forEach((opt) => {
+    if (!opt.value) return;
+    opt.disabled = !!selectedFirst && opt.value === selectedFirst;
+  });
+
+  if (selectedFirst && second.value === selectedFirst) {
+    second.value = '';
+  }
 }
 
 function fmtTime(ms) {
@@ -339,12 +397,41 @@ function fmtTime(ms) {
 
 // ── Actions ──────────────────────────────────────────────────────
 function capturePost(teamId) {
-  const postId = document.getElementById(`cap-${teamId}`).value;
-  if (!postId) { showToast('Select a post to capture', 'warn'); return; }
-  const team = gs.teams.find(t => t.id === teamId);
-  const post = gs.posts.find(p => p.id === postId);
-  confirmAction(`Capture ${post.name} for ${team.name}?`,
-    () => socket.emit('capturePost', { postId, teamId }));
+  const selections = collectCaptureSelections();
+  if (!selections.length) { showToast('Select at least one post to capture', 'warn'); return; }
+
+  const message = [
+    'Confirm capture?',
+    ...selections.map(item => `${item.teamName} -> ${item.postName}`)
+  ].join('\n');
+
+  confirmAction(message, () => {
+    selections.forEach(({ teamId: selectedTeamId, postId }) => {
+      socket.emit('capturePost', { postId, teamId: selectedTeamId });
+    });
+  });
+}
+
+function collectCaptureSelections() {
+  if (!gs || !Array.isArray(gs.teams)) return [];
+
+  return gs.teams
+    .map(team => {
+      const select = document.getElementById(`cap-${team.id}`);
+      const postId = select ? select.value : '';
+      if (!postId) return null;
+
+      const post = gs.posts.find(p => p.id === postId);
+      if (!post) return null;
+
+      return {
+        teamId: team.id,
+        teamName: team.name,
+        postId: post.id,
+        postName: post.name
+      };
+    })
+    .filter(Boolean);
 }
 
 function steal(actingTeamId) {
@@ -384,11 +471,14 @@ function activateShield(actingTeamId) {
 }
 
 function seek(actingTeamId) {
+  const actor = gs.teams.find(t => t.id === actingTeamId);
+  const others = gs.teams.filter(t => t.id !== actingTeamId);
+  if (others.length < 2) { showToast('Seek needs at least 2 opponent teams', 'warn'); return; }
+
   const t1 = document.getElementById(`seek1-${actingTeamId}`).value;
   const t2 = document.getElementById(`seek2-${actingTeamId}`).value;
   if (!t1 || !t2) { showToast('Select two target teams', 'warn'); return; }
   if (t1 === t2) { showToast('Select two different teams', 'warn'); return; }
-  const actor = gs.teams.find(t => t.id === actingTeamId);
   const target1 = gs.teams.find(t => t.id === t1);
   const target2 = gs.teams.find(t => t.id === t2);
   confirmAction(`Seek ${target1.name} and ${target2.name} points for ${actor.name}?\nCost: 0 pts`,
@@ -483,6 +573,7 @@ function openSettings() {
   const tv = s.tierValues || { high: 50, low: 30 };
   const postCd = s.postCooldowns || { capture: 5, secure: 10 };
   const actCd = s.actionCooldowns || { capture: 0, steal: 5, secure: 0, shield: 0, breakShield: 0, seek: 0 };
+  const shieldDuration = s.shieldDuration ?? 10;
   
   let html = `
     <div style="display:flex;gap:24px;flex-wrap:wrap">
@@ -504,6 +595,8 @@ function openSettings() {
             <label>Secure Ability <input type="number" id="set-tcd-sec" value="${actCd.secure}"></label>
             <label>Shield Ability <input type="number" id="set-tcd-shield" value="${actCd.shield}"></label>
             <label>Seek Ability <input type="number" id="set-tcd-seek" value="${actCd.seek}"></label>
+            <label>Shield Duration <input type="number" id="set-shield-duration" value="${shieldDuration}"></label>
+            <div style="font-size:0.75rem; color:var(--text-muted); margin-top:-4px; margin-bottom:12px;">How long Shield immunity stays active after activation.</div>
             
             <h3 style="margin-top:16px;">Point Tier Values</h3>
             <label>High Tier <input type="number" id="set-high-tier" value="${tv.high}"></label>
@@ -575,6 +668,7 @@ function saveSettings() {
       shield: getFloat('set-tcd-shield', 0),
       seek: getFloat('set-tcd-seek', 0)
     },
+    shieldDuration: getFloat('set-shield-duration', 10),
     costs: {
       capture: getInt('set-cost-cap', 0),
       steal: getInt('set-cost-steal', 50),

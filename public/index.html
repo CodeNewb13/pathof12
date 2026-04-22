@@ -17,6 +17,7 @@
       <div class="payout-block">
         <span class="payout-label">Next payout in:</span>
         <span id="payout-countdown" class="payout-countdown">--:--</span>
+        <span id="round-counter" class="round-counter">Rounds: 0</span>
       </div>
       <div class="payout-actions admin-only hidden">
         <button class="btn btn-warning btn-sm" onclick="triggerPayout()">💰 Payout Now</button>
@@ -40,7 +41,10 @@
     <main id="main-content" style="flex:3;">
       <!-- Post Board -->
       <section id="posts-section">
-        <h2 class="section-title">📍 Post Board</h2>
+        <div class="section-title-row">
+          <h2 class="section-title">📍 Post Board</h2>
+          <div id="post-board-actions" class="post-board-actions"></div>
+        </div>
         <div id="posts-grid" class="posts-grid">
           <div class="loading">Connecting…</div>
         </div>

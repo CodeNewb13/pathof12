@@ -3,5 +3,3 @@ data/
 .env
 redis-local/
 Redis-x64-*.zip
-dump.rdb
-temp_output.txt

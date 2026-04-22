@@ -69,70 +69,72 @@ function broadcast() {
   io.emit('gameState', game.getState());
 }
 
-// ── Auth Routes ──────────────────────────────────────────────────
-app.get('/auth/me', (req, res) => {
-  console.log(`[Auth/me] GET requested. Session admin:`, req.session.admin);
-  res.json({ user: req.session.admin || null });
-});
-
-app.post('/auth/login', async (req, res) => {
-  const { username, password } = req.body || {};
-  console.log(`[Auth/login] POST requested for user: ${username}`);
-  try {
-    const admin = await adminStore.verify(username, password);
-    if (!admin) {
-      console.log(`[Auth/login] Verification failed for user: ${username}`);
-      return res.status(401).json({ error: 'Invalid username or password' });
-    }
-    
-    console.log(`[Auth/login] Successful login for user: ${username}, role: ${admin.role}`);
-    req.session.admin = admin;
-    req.session.save((err) => {
-      if (err) console.error('[Auth/login] Session save error:', err);
-      res.json({ user: admin });
-    });
-  } catch (error) {
-    console.error(`[Auth/login] Server error during login:`, error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-app.post('/auth/logout', (req, res) => {
-  console.log(`[Auth/logout] POST requested.`);
-  req.session.destroy((err) => {
-    if (err) console.error('[Auth/logout] Session destroy error:', err);
-    res.json({ ok: true });
-  });
-});
-
 function requireAdmin(req, res, next) {
-  if (!req.session.admin) return res.status(403).json({ error: 'Login required' });
+  if (!req.session?.admin) return res.status(403).json({ error: 'Login required' });
   next();
 }
 
-app.get('/auth/accounts', requireAdmin, async (req, res) => {
-  try {
-    res.json(await adminStore.getAll());
-  } catch (error) {
-    console.error('[Auth/accounts] Failed to load accounts:', error);
-    res.status(500).json({ error: 'Failed to load accounts' });
-  }
-});
+function registerAuthRoutes() {
+  app.get('/auth/me', (req, res) => {
+    console.log(`[Auth/me] GET requested. Session admin:`, req.session?.admin);
+    res.json({ user: req.session?.admin || null });
+  });
 
-app.post('/auth/accounts', requireAdmin, async (req, res) => {
-  const { username, password } = req.body || {};
-  const result = await adminStore.create(username, password);
-  if (!result.success) return res.status(400).json({ error: result.error });
-  res.json(result.admin);
-});
+  app.post('/auth/login', async (req, res) => {
+    const { username, password } = req.body || {};
+    console.log(`[Auth/login] POST requested for user: ${username}`);
+    try {
+      const admin = await adminStore.verify(username, password);
+      if (!admin) {
+        console.log(`[Auth/login] Verification failed for user: ${username}`);
+        return res.status(401).json({ error: 'Invalid username or password' });
+      }
 
-app.delete('/auth/accounts/:id', requireAdmin, async (req, res) => {
-  if (req.params.id === req.session.admin.id)
-    return res.status(400).json({ error: 'Cannot delete your own account' });
-  const result = await adminStore.delete(req.params.id);
-  if (!result.success) return res.status(400).json({ error: result.error });
-  res.json({ ok: true });
-});
+      console.log(`[Auth/login] Successful login for user: ${username}, role: ${admin.role}`);
+      req.session.admin = admin;
+      req.session.save((err) => {
+        if (err) console.error('[Auth/login] Session save error:', err);
+        res.json({ user: admin });
+      });
+    } catch (error) {
+      console.error(`[Auth/login] Server error during login:`, error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  app.post('/auth/logout', (req, res) => {
+    console.log(`[Auth/logout] POST requested.`);
+    if (!req.session) return res.json({ ok: true });
+    req.session.destroy((err) => {
+      if (err) console.error('[Auth/logout] Session destroy error:', err);
+      res.json({ ok: true });
+    });
+  });
+
+  app.get('/auth/accounts', requireAdmin, async (req, res) => {
+    try {
+      res.json(await adminStore.getAll());
+    } catch (error) {
+      console.error('[Auth/accounts] Failed to load accounts:', error);
+      res.status(500).json({ error: 'Failed to load accounts' });
+    }
+  });
+
+  app.post('/auth/accounts', requireAdmin, async (req, res) => {
+    const { username, password } = req.body || {};
+    const result = await adminStore.create(username, password);
+    if (!result.success) return res.status(400).json({ error: result.error });
+    res.json(result.admin);
+  });
+
+  app.delete('/auth/accounts/:id', requireAdmin, async (req, res) => {
+    if (req.params.id === req.session?.admin?.id)
+      return res.status(400).json({ error: 'Cannot delete your own account' });
+    const result = await adminStore.delete(req.params.id);
+    if (!result.success) return res.status(400).json({ error: result.error });
+    res.json({ ok: true });
+  });
+}
 
 // Server-side payout timer check
 setInterval(() => {
@@ -140,6 +142,8 @@ setInterval(() => {
   let changed = false;
 
   const now = Date.now();
+  if (game.clearExpiredShields(now)) changed = true;
+
   for (const post of s.posts) {
     if (post.isSecured && post.cooldownEndsAt && now >= post.cooldownEndsAt) {
       post.isSecured = false;
@@ -251,6 +255,8 @@ async function bootstrap() {
   app.use(sessionMiddleware);
   app.use(express.static(path.join(__dirname, '..', 'public')));
   app.use(express.json());
+
+  registerAuthRoutes();
 
   // Share session with Socket.IO.
   io.use((socket, next) => sessionMiddleware(socket.request, {}, next));

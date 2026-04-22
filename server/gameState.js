@@ -6,6 +6,7 @@ const POST_NAMES = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
 const DEFAULT_SETTINGS = {
   postCooldowns: { capture: 5, secure: 10 },
   actionCooldowns: { capture: 0, steal: 5, secure: 0, shield: 0, seek: 0 },
+  shieldDuration: 10,
   payoutInterval: 30,
   costs: { steal: 50, safe: 40, breakSafe: 80, capture: 0, secure: 50, seek: 0 },
   tierValues: { high: 50, low: 30 },
@@ -19,7 +20,7 @@ function createDefaultState() {
   const now = Date.now();
   return {
     settings: JSON.parse(JSON.stringify(DEFAULT_SETTINGS)),
-    teams: DEFAULT_SETTINGS.teams.map(t => ({ ...t, points: 0, hasSafe: false, cooldowns: { capture: 0, steal: 0, secure: 0, shield: 0, seek: 0 } })),
+    teams: DEFAULT_SETTINGS.teams.map(t => ({ ...t, points: 0, hasSafe: false, safeEndsAt: null, cooldowns: { capture: 0, steal: 0, secure: 0, shield: 0, seek: 0 } })),
     posts: POST_NAMES.map((name, i) => ({
       id: `post_${name}`,
       name: `Post ${name}`,
@@ -29,6 +30,7 @@ function createDefaultState() {
       cooldownEndsAt: null
     })),
     nextPayoutAt: now + DEFAULT_SETTINGS.payoutInterval * 60 * 1000,
+    roundCount: 0,
     timerPaused: false,
     pausedTimeRemaining: null,
     eventLog: [],
@@ -37,6 +39,29 @@ function createDefaultState() {
 }
 
 class GameState {
+  _sanitizeNonNegativeNumber(value, fallback = 0) {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n < 0) return fallback;
+    return n;
+  }
+
+  _normalizeCooldownAndDurationSettings() {
+    if (!this.state.settings) this.state.settings = {};
+    if (!this.state.settings.postCooldowns) this.state.settings.postCooldowns = {};
+    if (!this.state.settings.actionCooldowns) this.state.settings.actionCooldowns = {};
+
+    this.state.settings.postCooldowns.capture = this._sanitizeNonNegativeNumber(this.state.settings.postCooldowns.capture, DEFAULT_SETTINGS.postCooldowns.capture);
+    this.state.settings.postCooldowns.secure = this._sanitizeNonNegativeNumber(this.state.settings.postCooldowns.secure, DEFAULT_SETTINGS.postCooldowns.secure);
+
+    this.state.settings.actionCooldowns.capture = this._sanitizeNonNegativeNumber(this.state.settings.actionCooldowns.capture, DEFAULT_SETTINGS.actionCooldowns.capture);
+    this.state.settings.actionCooldowns.steal = this._sanitizeNonNegativeNumber(this.state.settings.actionCooldowns.steal, DEFAULT_SETTINGS.actionCooldowns.steal);
+    this.state.settings.actionCooldowns.secure = this._sanitizeNonNegativeNumber(this.state.settings.actionCooldowns.secure, DEFAULT_SETTINGS.actionCooldowns.secure);
+    this.state.settings.actionCooldowns.shield = this._sanitizeNonNegativeNumber(this.state.settings.actionCooldowns.shield, DEFAULT_SETTINGS.actionCooldowns.shield);
+    this.state.settings.actionCooldowns.seek = this._sanitizeNonNegativeNumber(this.state.settings.actionCooldowns.seek, DEFAULT_SETTINGS.actionCooldowns.seek);
+
+    this.state.settings.shieldDuration = this._sanitizeNonNegativeNumber(this.state.settings.shieldDuration, DEFAULT_SETTINGS.shieldDuration);
+  }
+
   constructor() {
     this.requestFunctions = {};
     this.store = new Store();
@@ -72,8 +97,16 @@ class GameState {
       this.state.settings.tierValues = { high: 50, low: 30 };
       dirty = true;
     }
+    if (this.state.settings.shieldDuration === undefined) {
+      this.state.settings.shieldDuration = DEFAULT_SETTINGS.shieldDuration;
+      dirty = true;
+    }
     if (this.state.settings.tierValues && this.state.settings.tierValues.mid !== undefined) {
       delete this.state.settings.tierValues.mid;
+      dirty = true;
+    }
+    if (this.state.roundCount === undefined) {
+      this.state.roundCount = 0;
       dirty = true;
     }
     
@@ -82,7 +115,18 @@ class GameState {
         t.cooldowns = { capture: 0, steal: 0, secure: 0, shield: 0, breakShield: 0, seek: 0 };
         dirty = true;
       }
+      if (t.safeEndsAt === undefined) {
+        const durationMs = this._sanitizeNonNegativeNumber(this.state.settings.shieldDuration, DEFAULT_SETTINGS.shieldDuration) * 60000;
+        t.safeEndsAt = t.hasSafe ? (Date.now() + durationMs) : null;
+        dirty = true;
+      }
+      if (t.hasSafe && !t.safeEndsAt) {
+        t.hasSafe = false;
+        dirty = true;
+      }
     }
+
+    this._normalizeCooldownAndDurationSettings();
 
     const tv = this.state.settings.tierValues;
     for (const post of this.state.posts) {
@@ -140,7 +184,7 @@ class GameState {
   checkTeamCooldown(teamId, actionName) {
     const team = this.getTeam(teamId);
     if (!team) return { success: false, error: 'Team not found' };
-    const cdEnd = team.cooldowns && team.cooldowns[actionName] ? team.cooldowns[actionName] : 0;
+    const cdEnd = this._sanitizeNonNegativeNumber(team.cooldowns && team.cooldowns[actionName] ? team.cooldowns[actionName] : 0, 0);
     if (cdEnd > Date.now()) {
       const waitMins = Math.ceil((cdEnd - Date.now()) / 60000);
       return { success: false, error: `${team.name} cannot ${actionName} for ${waitMins}m` };
@@ -150,11 +194,25 @@ class GameState {
   
   applyTeamCooldown(teamId, actionName) {
     const team = this.getTeam(teamId);
-    const duration = this.state.settings.actionCooldowns[actionName] || 0;
+    const duration = this._sanitizeNonNegativeNumber(this.state.settings.actionCooldowns[actionName], 0);
     if (duration > 0) {
       if (!team.cooldowns) team.cooldowns = {};
       team.cooldowns[actionName] = Date.now() + duration * 60000;
     }
+  }
+
+  clearExpiredShields(now = Date.now()) {
+    let changed = false;
+    for (const team of this.state.teams) {
+      if (team.hasSafe && team.safeEndsAt && now >= team.safeEndsAt) {
+        team.hasSafe = false;
+        team.safeEndsAt = null;
+        this.log(`${team.name}'s Shield expired`);
+        changed = true;
+      }
+    }
+    if (changed) this.save();
+    return changed;
   }
 
   capturePost(postId, teamId) {
@@ -203,6 +261,7 @@ class GameState {
       
       actor.points -= shieldCost;
       target.hasSafe = false;
+      target.safeEndsAt = null;
 
       this.log(`${actor.name} broke ${target.name}'s shield with Steal (cost: ${shieldCost} pts)`);
       this.applyTeamCooldown(actingTeamId, 'steal');
@@ -254,6 +313,15 @@ class GameState {
   shield(actingTeamId) {
     const actor = this.getTeam(actingTeamId);
     if (!actor) return { success: false, error: 'Team not found' };
+
+    const now = Date.now();
+    if (actor.hasSafe && !actor.safeEndsAt) {
+      actor.hasSafe = false;
+    }
+    if (actor.hasSafe && actor.safeEndsAt && now >= actor.safeEndsAt) {
+      actor.hasSafe = false;
+      actor.safeEndsAt = null;
+    }
     
     const cdCheck = this.checkTeamCooldown(actingTeamId, 'shield');
     if (!cdCheck.success) return cdCheck;
@@ -265,8 +333,10 @@ class GameState {
 
     actor.points -= cost;
     actor.hasSafe = true;
+    const durationMins = this._sanitizeNonNegativeNumber(this.state.settings.shieldDuration, DEFAULT_SETTINGS.shieldDuration);
+    actor.safeEndsAt = now + durationMins * 60000;
 
-    this.log(`${actor.name} activated Shield (immunity) (cost: ${cost} pts)`);
+    this.log(`${actor.name} activated Shield (immunity) for ${durationMins}m (cost: ${cost} pts)`);
     this.applyTeamCooldown(actingTeamId, 'shield');
     this.save();
     return { success: true };
@@ -301,6 +371,7 @@ class GameState {
       if (team) { team.points += pts; return `${team.name} +${pts}`; }
       return null;
     }).filter(Boolean);
+    this.state.roundCount = (this.state.roundCount || 0) + 1;
     this.log(parts.length ? `Point payout: ${parts.join(', ')}` : 'Point payout: no posts owned');
     this.state.nextPayoutAt = Date.now() + this.state.settings.payoutInterval * 60 * 1000;
     this.save();
@@ -356,6 +427,7 @@ class GameState {
     const team = this.getTeam(teamId);
     if (!team) return { success: false, error: 'Team not found' };
     team.hasSafe = false;
+    team.safeEndsAt = null;
     this.log(`Admin removed immunity (Shield) from ${team.name}`);
     this.save();
     return { success: true };
@@ -431,6 +503,7 @@ class GameState {
 
     if (newSettings.postCooldowns) Object.assign(s.postCooldowns, newSettings.postCooldowns);
     if (newSettings.actionCooldowns) Object.assign(s.actionCooldowns, newSettings.actionCooldowns);
+    if (newSettings.shieldDuration != null) s.shieldDuration = newSettings.shieldDuration;
 
     if (newSettings.payoutInterval != null) {
       s.payoutInterval = newSettings.payoutInterval;
@@ -467,7 +540,7 @@ class GameState {
       for (const updTeam of newSettings.teams) {
         if (String(updTeam.id).startsWith('new_')) {
           const newId = `t_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
-          this.state.teams.push({ id: newId, name: updTeam.name, color: updTeam.color, points: 0, hasSafe: false, cooldowns: { capture: 0, steal: 0, secure: 0, shield: 0, breakShield: 0, seek: 0 } });
+          this.state.teams.push({ id: newId, name: updTeam.name, color: updTeam.color, points: 0, hasSafe: false, safeEndsAt: null, cooldowns: { capture: 0, steal: 0, secure: 0, shield: 0, breakShield: 0, seek: 0 } });
           s.teams.push({ id: newId, name: updTeam.name, color: updTeam.color });
         } else {
           const existing = this.state.teams.find(t => t.id === updTeam.id);
@@ -480,6 +553,8 @@ class GameState {
       this.state.teams = this.state.teams.filter(t => !removedIds.includes(t.id));
       s.teams = s.teams.filter(t => !removedIds.includes(t.id));
     }
+
+    this._normalizeCooldownAndDurationSettings();
 
     this.log('Admin updated game settings');
     this.save();
@@ -497,6 +572,7 @@ class GameState {
     for (const t of this.state.teams) {
       t.points = 0;
     }
+    this.state.roundCount = 0;
     this.state.timerPaused = true;
     this.state.pausedTimeRemaining = this.state.settings.payoutInterval * 60 * 1000;
     this.state.nextPayoutAt = Date.now() + this.state.pausedTimeRemaining;
