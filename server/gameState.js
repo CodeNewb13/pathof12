@@ -90,7 +90,7 @@ class GameState {
       if (this.state.settings.costs.seek === undefined) this.state.settings.costs.seek = 0;
     }
     if (!this.state.settings.actionCooldowns) {
-      this.state.settings.actionCooldowns = { capture: 0, steal: 5, secure: 0, shield: 0, breakShield: 0, seek: 0 };
+      this.state.settings.actionCooldowns = { capture: 0, steal: 5, secure: 0, shield: 0, seek: 0 };
       dirty = true;
     }
     if (!this.state.settings.tierValues) {
@@ -112,7 +112,7 @@ class GameState {
     
     for (const t of this.state.teams) {
       if (!t.cooldowns) {
-        t.cooldowns = { capture: 0, steal: 0, secure: 0, shield: 0, breakShield: 0, seek: 0 };
+        t.cooldowns = { capture: 0, steal: 0, secure: 0, shield: 0, seek: 0 };
         dirty = true;
       }
       if (t.safeEndsAt === undefined) {
@@ -540,7 +540,7 @@ class GameState {
       for (const updTeam of newSettings.teams) {
         if (String(updTeam.id).startsWith('new_')) {
           const newId = `t_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
-          this.state.teams.push({ id: newId, name: updTeam.name, color: updTeam.color, points: 0, hasSafe: false, safeEndsAt: null, cooldowns: { capture: 0, steal: 0, secure: 0, shield: 0, breakShield: 0, seek: 0 } });
+          this.state.teams.push({ id: newId, name: updTeam.name, color: updTeam.color, points: 0, hasSafe: false, safeEndsAt: null, cooldowns: { capture: 0, steal: 0, secure: 0, shield: 0, seek: 0 } });
           s.teams.push({ id: newId, name: updTeam.name, color: updTeam.color });
         } else {
           const existing = this.state.teams.find(t => t.id === updTeam.id);

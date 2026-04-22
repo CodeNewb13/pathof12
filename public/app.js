@@ -44,7 +44,6 @@ function render() {
 
 // ── Posts ───────────────────────────────────────────────────────
 function renderPosts() {
-  const tv = (gs.settings.tierValues) || { high: 50, low: 30 };
   const allPosts = gs.posts || [];
   const radius = allPosts.length <= 1 ? 0 : Math.max(160, allPosts.length * 45); // adjusted spacing
   const minHeight = allPosts.length === 0 ? '50px' : (radius * 2 + 150) + 'px';
@@ -572,7 +571,7 @@ function openSettings() {
   const s = gs.settings;
   const tv = s.tierValues || { high: 50, low: 30 };
   const postCd = s.postCooldowns || { capture: 5, secure: 10 };
-  const actCd = s.actionCooldowns || { capture: 0, steal: 5, secure: 0, shield: 0, breakShield: 0, seek: 0 };
+  const actCd = s.actionCooldowns || { capture: 0, steal: 5, secure: 0, shield: 0, seek: 0 };
   const shieldDuration = s.shieldDuration ?? 10;
   
   let html = `
@@ -609,7 +608,6 @@ function openSettings() {
             <label>Steal Point Cost <input type="number" id="set-cost-steal" value="${s.costs.steal}"></label>
             <label>Secure Cost (%) <input type="number" id="set-cost-sec" value="${s.costs.secure ?? 50}"></label>
             <label>Shield Point Cost <input type="number" id="set-cost-safe" value="${s.costs.safe}"></label>
-            <label>Break Shield Point Cost <input type="number" id="set-cost-bs" value="${s.costs.breakSafe || 80}"></label>
             <label>Seek Point Cost <input type="number" id="set-cost-seek" value="${s.costs.seek || 0}"></label>
   
           <h3 style="margin-top:16px;">Teams Config</h3>
@@ -674,7 +672,6 @@ function saveSettings() {
       steal: getInt('set-cost-steal', 50),
       secure: getInt('set-cost-sec', 50),
       safe: getInt('set-cost-safe', 40),
-      breakSafe: getInt('set-cost-bs', 80),
       seek: getInt('set-cost-seek', 0)
     },
     tierValues: {
