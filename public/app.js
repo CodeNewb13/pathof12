@@ -765,7 +765,12 @@ async function refreshAccountsList() {
   body.innerHTML = '<p style="color:var(--text-muted);font-size:0.85rem;padding:8px 0">Loading…</p>';
   try {
     const res = await fetch('/auth/accounts');
-    const accounts = await res.json();
+    const data = await res.json();
+    if (!res.ok) {
+      body.innerHTML = `<p style="color:var(--red);font-size:0.85rem">${escHtml(data.error || 'Failed to load accounts.')}</p>`;
+      return;
+    }
+    const accounts = Array.isArray(data) ? data : [];
     body.innerHTML = `
       <div style="margin-bottom:16px">
         <h4 style="font-size:0.85rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:8px">Current Accounts</h4>

@@ -16,41 +16,54 @@ app.set('trust proxy', 1);
 const server = http.createServer(app);
 const io = new Server(server);
 
-// Initialize Redis client for Railway/Production sessions
-const redisUrl = process.env.REDIS_URL || 'redis://127.0.0.1:6379';
-const redisClient = createClient({
-  url: redisUrl,
-  socket: redisUrl.startsWith('rediss://') ? { tls: true, rejectUnauthorized: false } : undefined
-});
+let redisClient = null;
+let sessionMiddleware;
 
-redisClient.on('connect', () => console.log('🟢 Connected to Redis'));
-redisClient.on('error', (err) => console.error('🔴 Redis Client Error', err));
-redisClient.connect().catch(console.error);
-const sessionMiddleware = session({
-  store: new RedisStore({
-    client: redisClient,
-    prefix: 'ctfapp:',
-  }),
-  proxy: true,
-  secret: process.env.SESSION_SECRET || 'ctf-secret-key',
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    httpOnly: true,
-    maxAge: 24 * 60 * 60 * 1000 
+async function setupSessions() {
+  const redisUrl = process.env.REDIS_URL;
+  let store;
+
+  if (redisUrl) {
+    redisClient = createClient({
+      url: redisUrl,
+      socket: redisUrl.startsWith('rediss://') ? { tls: true, rejectUnauthorized: false } : undefined
+    });
+
+    redisClient.on('connect', () => console.log('Connected to Redis'));
+    redisClient.on('error', (err) => console.error('Redis Client Error', err));
+
+    try {
+      await redisClient.connect();
+      store = new RedisStore({
+        client: redisClient,
+        prefix: 'ctfapp:',
+      });
+      console.log('Using Redis session store');
+    } catch (err) {
+      console.error('Failed to connect to Redis. Falling back to in-memory sessions.', err);
+      redisClient = null;
+    }
+  } else {
+    console.warn('REDIS_URL not set. Using in-memory sessions.');
   }
-});
 
-app.use(sessionMiddleware);
-app.use(express.static(path.join(__dirname, '..', 'public')));
-app.use(express.json());
-
-// Share session with Socket.IO
-io.engine.use(sessionMiddleware);
+  sessionMiddleware = session({
+    store,
+    proxy: true,
+    secret: process.env.SESSION_SECRET || 'ctf-secret-key',
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      maxAge: 24 * 60 * 60 * 1000,
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+      secure: process.env.NODE_ENV === 'production'
+    }
+  });
+}
 
 const game = new GameState();
-const adminStore = new AdminStore();
-adminStore.seed();
+let adminStore;
 
 function broadcast() {
   io.emit('gameState', game.getState());
@@ -97,8 +110,13 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-app.get('/auth/accounts', requireAdmin, (req, res) => {
-  res.json(adminStore.getAll());
+app.get('/auth/accounts', requireAdmin, async (req, res) => {
+  try {
+    res.json(await adminStore.getAll());
+  } catch (error) {
+    console.error('[Auth/accounts] Failed to load accounts:', error);
+    res.status(500).json({ error: 'Failed to load accounts' });
+  }
 });
 
 app.post('/auth/accounts', requireAdmin, async (req, res) => {
@@ -108,10 +126,10 @@ app.post('/auth/accounts', requireAdmin, async (req, res) => {
   res.json(result.admin);
 });
 
-app.delete('/auth/accounts/:id', requireAdmin, (req, res) => {
+app.delete('/auth/accounts/:id', requireAdmin, async (req, res) => {
   if (req.params.id === req.session.admin.id)
     return res.status(400).json({ error: 'Cannot delete your own account' });
-  const result = adminStore.delete(req.params.id);
+  const result = await adminStore.delete(req.params.id);
   if (!result.success) return res.status(400).json({ error: result.error });
   res.json({ ok: true });
 });
@@ -226,6 +244,26 @@ io.on('connection', (socket) => {
 });
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`CTF Webapp running on http://localhost:${PORT}`);
+
+async function bootstrap() {
+  await setupSessions();
+
+  app.use(sessionMiddleware);
+  app.use(express.static(path.join(__dirname, '..', 'public')));
+  app.use(express.json());
+
+  // Share session with Socket.IO.
+  io.use((socket, next) => sessionMiddleware(socket.request, {}, next));
+
+  adminStore = new AdminStore({ redisClient });
+  await adminStore.seed();
+
+  server.listen(PORT, () => {
+    console.log(`CTF Webapp running on http://localhost:${PORT}`);
+  });
+}
+
+bootstrap().catch((err) => {
+  console.error('Fatal startup error:', err);
+  process.exit(1);
 });
