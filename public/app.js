@@ -131,7 +131,8 @@ function teamCard(team) {
   const others = gs.teams.filter(t => t.id !== team.id);
   const ownedUnsecured = gs.posts.filter(p => p.owningTeamId === team.id && !p.isSecured);
   const shieldRem = getShieldRemainingMs(team);
-  const shieldActive = shieldRem > 0;
+  const shieldActive = team.hasSafe && shieldRem > 0;
+  const shieldInCooldown = !team.hasSafe && shieldRem > 0;
   const canSeek = others.length >= 2;
   const now = Date.now();
   const availCapture = gs.posts.filter(p => {
@@ -146,6 +147,7 @@ function teamCard(team) {
     <span>${escHtml(team.name)}</span>
     <div style="display:flex;gap:6px;align-items:center">
       ${shieldActive ? '<span class="safe-badge safe-badge-active">🛡️ Active</span>' : ''}
+      ${shieldInCooldown ? '<span class="safe-badge">In Cooldown</span>' : ''}
       ${isLogged && shieldActive ? `<button class="btn btn-xs btn-secondary" onclick="removeShield('${team.id}')">✕ Remove</button>` : ''}
     </div>
   </div>
@@ -153,7 +155,7 @@ function teamCard(team) {
     <div class="team-points">
       <span class="points-label">Points:</span>
       <span class="points-value" style="color:${team.color}">${team.points}</span>
-      <span id="shield-chip-${team.id}" class="shield-chip${shieldActive ? '' : ' hidden'}">${shieldActive ? `🛡️ ${fmtTime(shieldRem)}` : ''}</span>
+      <span id="shield-chip-${team.id}" class="shield-chip${shieldActive || shieldInCooldown ? '' : ' hidden'}${shieldInCooldown ? ' shield-chip-cooldown' : ''}">${shieldActive ? `🛡️ ${fmtTime(shieldRem)}` : (shieldInCooldown ? `In Cooldown ${fmtTime(shieldRem)}` : '')}</span>
     </div>
 
     ${isLogged ? `
@@ -192,7 +194,7 @@ function teamCard(team) {
 
       <!-- Shield -->
       <div class="action-row">
-        <button id="btn-shield-${team.id}" class="btn btn-primary btn-xs" data-orig="🛡️ Shield (${gs.settings.costs.safe}pts)" onclick="activateShield('${team.id}')" ${shieldActive ? 'disabled' : ''}>
+        <button id="btn-shield-${team.id}" class="btn btn-primary btn-xs" data-orig="🛡️ Shield (${gs.settings.costs.safe}pts)" onclick="activateShield('${team.id}')" ${shieldActive || shieldInCooldown ? 'disabled' : ''}>
           🛡️ Shield (${gs.settings.costs.safe}pts)
         </button>
       </div>
@@ -339,11 +341,12 @@ function tick() {
         const rem = Math.max(0, cdEnds - now);
         const orig = btn.dataset.orig || '';
         const shieldRem = getShieldRemainingMs(t);
-        const shieldActive = shieldRem > 0;
+        const shieldActive = t.hasSafe && shieldRem > 0;
+        const shieldInCooldown = !t.hasSafe && shieldRem > 0;
 
         if (act === 'shield') {
           btn.textContent = orig;
-          btn.disabled = shieldActive || rem > 0;
+          btn.disabled = shieldActive || shieldInCooldown || rem > 0;
         } else if (rem > 0) {
           btn.textContent = `${orig} (⏳ ${fmtTime(rem)})`;
           btn.disabled = true;
@@ -357,10 +360,18 @@ function tick() {
     const shieldChip = document.getElementById(`shield-chip-${t.id}`);
     if (shieldChip) {
       const shieldRem = getShieldRemainingMs(t);
-      if (shieldRem > 0) {
+      const shieldActive = t.hasSafe && shieldRem > 0;
+      const shieldInCooldown = !t.hasSafe && shieldRem > 0;
+      if (shieldActive) {
         shieldChip.textContent = `🛡️ ${fmtTime(shieldRem)}`;
+        shieldChip.classList.remove('shield-chip-cooldown');
+        shieldChip.classList.remove('hidden');
+      } else if (shieldInCooldown) {
+        shieldChip.textContent = `In Cooldown ${fmtTime(shieldRem)}`;
+        shieldChip.classList.add('shield-chip-cooldown');
         shieldChip.classList.remove('hidden');
       } else {
+        shieldChip.classList.remove('shield-chip-cooldown');
         shieldChip.classList.add('hidden');
       }
     }
@@ -368,7 +379,7 @@ function tick() {
 }
 
 function getShieldRemainingMs(team) {
-  if (!team || !team.hasSafe || !team.safeEndsAt) return 0;
+  if (!team || !team.safeEndsAt) return 0;
   return Math.max(0, team.safeEndsAt - Date.now());
 }
 
@@ -866,11 +877,19 @@ async function refreshAccountsList() {
       <div style="margin-bottom:16px">
         <h4 style="font-size:0.85rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:8px">Current Accounts</h4>
         ${accounts.map(a => `
-          <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)">
-            <span style="font-size:0.9rem">👤 ${escHtml(a.username)} <span style="font-size:0.75rem;color:var(--text-muted)">(${a.role})</span></span>
-            ${a.id !== authUser.id
-              ? `<button class="btn btn-xs btn-danger" onclick="deleteAccount('${a.id}','${escHtml(a.username)}')">🗑 Remove</button>`
-              : '<span style="font-size:0.75rem;color:var(--text-muted)">(you)</span>'}
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);gap:8px;flex-wrap:wrap">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:220px;flex:1">
+              <span style="font-size:0.84rem;color:${a.online ? '#2ea043' : '#8b949e'}">${a.online ? '● Online' : '○ Offline'}</span>
+              <span style="font-size:0.78rem;color:${a.loggedIn ? '#58a6ff' : '#8b949e'}">${a.loggedIn ? 'Logged in' : 'Logged out'}</span>
+              <span style="font-size:0.76rem;color:var(--text-muted)">(${a.role})</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end;flex:1">
+              <input id="acc-name-${a.id}" class="adjust-input" style="width:130px" value="${escHtml(a.username)}" />
+              <button class="btn btn-xs btn-info" onclick="renameAccount('${a.id}','${escHtml(a.username)}')">Rename</button>
+              ${a.id !== authUser.id
+                ? `<button class="btn btn-xs btn-danger" onclick="deleteAccount('${a.id}','${escHtml(a.username)}')">🗑 Remove</button>`
+                : '<span style="font-size:0.75rem;color:var(--text-muted)">(you)</span>'}
+            </div>
           </div>`).join('')}
       </div>`;
   } catch (e) {
@@ -915,6 +934,41 @@ async function deleteAccount(id, username) {
       showToast('Failed to remove account', 'error');
     }
   });
+}
+
+async function renameAccount(id, oldUsername) {
+  const input = document.getElementById(`acc-name-${id}`);
+  if (!input) return;
+  const username = input.value.trim();
+  if (!username) {
+    showToast('Username cannot be empty', 'error');
+    input.value = oldUsername;
+    return;
+  }
+  if (username === oldUsername) return;
+
+  try {
+    const res = await fetch(`/auth/accounts/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || 'Failed to rename account', 'error');
+      input.value = oldUsername;
+      return;
+    }
+    showToast(`Renamed ${oldUsername} to ${username}`, 'success');
+    await refreshAccountsList();
+    if (authUser && authUser.id === id) {
+      authUser.username = username;
+      updateAuthUI();
+    }
+  } catch (e) {
+    showToast('Failed to rename account', 'error');
+    input.value = oldUsername;
+  }
 }
 
 initAuth();

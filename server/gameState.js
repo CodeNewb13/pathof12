@@ -1,7 +1,18 @@
 const Store = require('./store');
 
-const POST_VALUES = [30, 30, 30, 30, 50, 50, 50, 50];
-const POST_NAMES = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+const POST_VALUES = [50, 50, 30, 30, 30, 30, 30, 30];
+const POST_NAMES = ['Aries', 'Taurus', 'Gemini', 'Cancer', 'Leo', 'Virgo', 'Libra', 'Scorpio'];
+
+const OLYMPUS_TEAMS = [
+  { id: 't1', name: 'House Athena', color: '#1f7a8c' },
+  { id: 't2', name: 'House Apollo', color: '#f4b942' },
+  { id: 't3', name: 'House Hermes', color: '#e67e22' },
+  { id: 't4', name: 'House Artemis', color: '#2e8b57' },
+  { id: 't5', name: 'House Orion', color: '#4b5dba' },
+  { id: 't6', name: 'House Atlas', color: '#8c6239' },
+  { id: 't7', name: 'House Lyra', color: '#8a5fd2' },
+  { id: 't8', name: 'House Helios', color: '#d4a017' }
+];
 
 const DEFAULT_SETTINGS = {
   postCooldowns: { capture: 5, secure: 10 },
@@ -10,10 +21,7 @@ const DEFAULT_SETTINGS = {
   payoutInterval: 30,
   costs: { steal: 50, safe: 40, breakSafe: 80, capture: 0, secure: 50, seek: 0 },
   tierValues: { high: 50, low: 30 },
-  teams: [
-    { id: 't1', name: 'Team Red', color: '#e74c3c' },
-    { id: 't2', name: 'Team Blue', color: '#3498db' }
-  ]
+  teams: OLYMPUS_TEAMS
 };
 
 function createDefaultState() {
@@ -23,7 +31,7 @@ function createDefaultState() {
     teams: DEFAULT_SETTINGS.teams.map(t => ({ ...t, points: 0, hasSafe: false, safeEndsAt: null, cooldowns: { capture: 0, steal: 0, secure: 0, shield: 0, seek: 0 } })),
     posts: POST_NAMES.map((name, i) => ({
       id: `post_${name}`,
-      name: `Post ${name}`,
+      name,
       pointValue: POST_VALUES[i],
       owningTeamId: null,
       isSecured: false,
@@ -204,10 +212,11 @@ class GameState {
   clearExpiredShields(now = Date.now()) {
     let changed = false;
     for (const team of this.state.teams) {
-      if (team.hasSafe && team.safeEndsAt && now >= team.safeEndsAt) {
+      if (team.safeEndsAt && now >= team.safeEndsAt) {
+        const wasActive = !!team.hasSafe;
         team.hasSafe = false;
         team.safeEndsAt = null;
-        this.log(`${team.name}'s Shield expired`);
+        if (wasActive) this.log(`${team.name}'s Shield expired`);
         changed = true;
       }
     }
@@ -261,7 +270,7 @@ class GameState {
       
       actor.points -= shieldCost;
       target.hasSafe = false;
-      target.safeEndsAt = null;
+      // Keep safeEndsAt running so the client can show "In Cooldown" countdown.
 
       this.log(`${actor.name} broke ${target.name}'s shield with Steal (cost: ${shieldCost} pts)`);
       this.applyTeamCooldown(actingTeamId, 'steal');

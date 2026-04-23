@@ -18,6 +18,44 @@ const io = new Server(server);
 
 let redisClient = null;
 let sessionMiddleware;
+const activeAccountSessions = new Map();
+const onlineAccountConnections = new Map();
+
+function newSessionToken() {
+  return `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function incrementOnline(accountId) {
+  onlineAccountConnections.set(accountId, (onlineAccountConnections.get(accountId) || 0) + 1);
+}
+
+function decrementOnline(accountId) {
+  const current = onlineAccountConnections.get(accountId) || 0;
+  if (current <= 1) onlineAccountConnections.delete(accountId);
+  else onlineAccountConnections.set(accountId, current - 1);
+}
+
+function getValidatedSessionUser(req) {
+  const user = req.session?.admin;
+  const token = req.session?.loginToken;
+  if (!user || !token) return null;
+  const active = activeAccountSessions.get(user.id);
+  if (!active || active.token !== token) return null;
+  active.lastSeenAt = Date.now();
+  return user;
+}
+
+function getAccountStatuses(accounts) {
+  return accounts.map((a) => {
+    const active = activeAccountSessions.get(a.id);
+    return {
+      ...a,
+      loggedIn: !!active,
+      online: (onlineAccountConnections.get(a.id) || 0) > 0,
+      lastSeenAt: active ? active.lastSeenAt : null
+    };
+  });
+}
 
 async function setupSessions() {
   const redisUrl = process.env.REDIS_URL;
@@ -70,14 +108,27 @@ function broadcast() {
 }
 
 function requireAdmin(req, res, next) {
-  if (!req.session?.admin) return res.status(403).json({ error: 'Login required' });
+  const user = getValidatedSessionUser(req);
+  if (!user) {
+    if (req.session) {
+      req.session.admin = null;
+      req.session.loginToken = null;
+    }
+    return res.status(403).json({ error: 'Login required' });
+  }
+  req.currentAdmin = user;
   next();
 }
 
 function registerAuthRoutes() {
   app.get('/auth/me', (req, res) => {
-    console.log(`[Auth/me] GET requested. Session admin:`, req.session?.admin);
-    res.json({ user: req.session?.admin || null });
+    const user = getValidatedSessionUser(req);
+    console.log(`[Auth/me] GET requested. Session admin:`, user);
+    if (!user && req.session) {
+      req.session.admin = null;
+      req.session.loginToken = null;
+    }
+    res.json({ user: user || null });
   });
 
   app.post('/auth/login', async (req, res) => {
@@ -91,7 +142,21 @@ function registerAuthRoutes() {
       }
 
       console.log(`[Auth/login] Successful login for user: ${username}, role: ${admin.role}`);
+      const existing = activeAccountSessions.get(admin.id);
+      if (existing && existing.sessionId !== req.sessionID && sessionMiddleware.store?.destroy) {
+        sessionMiddleware.store.destroy(existing.sessionId, () => {});
+      }
+
+      const loginToken = newSessionToken();
       req.session.admin = admin;
+      req.session.loginToken = loginToken;
+      activeAccountSessions.set(admin.id, {
+        sessionId: req.sessionID,
+        token: loginToken,
+        username: admin.username,
+        role: admin.role,
+        lastSeenAt: Date.now()
+      });
       req.session.save((err) => {
         if (err) console.error('[Auth/login] Session save error:', err);
         res.json({ user: admin });
@@ -104,6 +169,12 @@ function registerAuthRoutes() {
 
   app.post('/auth/logout', (req, res) => {
     console.log(`[Auth/logout] POST requested.`);
+    const user = req.session?.admin;
+    const token = req.session?.loginToken;
+    if (user && token) {
+      const active = activeAccountSessions.get(user.id);
+      if (active && active.token === token) activeAccountSessions.delete(user.id);
+    }
     if (!req.session) return res.json({ ok: true });
     req.session.destroy((err) => {
       if (err) console.error('[Auth/logout] Session destroy error:', err);
@@ -113,7 +184,8 @@ function registerAuthRoutes() {
 
   app.get('/auth/accounts', requireAdmin, async (req, res) => {
     try {
-      res.json(await adminStore.getAll());
+      const accounts = await adminStore.getAll();
+      res.json(getAccountStatuses(accounts));
     } catch (error) {
       console.error('[Auth/accounts] Failed to load accounts:', error);
       res.status(500).json({ error: 'Failed to load accounts' });
@@ -128,11 +200,35 @@ function registerAuthRoutes() {
   });
 
   app.delete('/auth/accounts/:id', requireAdmin, async (req, res) => {
-    if (req.params.id === req.session?.admin?.id)
+    if (req.params.id === req.currentAdmin?.id)
       return res.status(400).json({ error: 'Cannot delete your own account' });
     const result = await adminStore.delete(req.params.id);
+    if (result.success) {
+      activeAccountSessions.delete(req.params.id);
+      onlineAccountConnections.delete(req.params.id);
+    }
     if (!result.success) return res.status(400).json({ error: result.error });
     res.json({ ok: true });
+  });
+
+  app.patch('/auth/accounts/:id', requireAdmin, async (req, res) => {
+    const { username, password, role } = req.body || {};
+    const updates = {};
+    if (username !== undefined) updates.username = username;
+    if (password !== undefined) updates.password = password;
+    if (role !== undefined) updates.role = role;
+
+    const result = await adminStore.update(req.params.id, updates);
+    if (!result.success) return res.status(400).json({ error: result.error });
+
+    const active = activeAccountSessions.get(req.params.id);
+    if (active && result.admin?.username) {
+      active.username = result.admin.username;
+      active.role = result.admin.role;
+      active.lastSeenAt = Date.now();
+    }
+
+    res.json(result.admin);
   });
 }
 
@@ -166,8 +262,25 @@ io.on('connection', (socket) => {
   socket.emit('gameState', game.getState());
 
   function getUser() {
-    return socket.request.session && socket.request.session.admin;
+    const req = socket.request;
+    const user = getValidatedSessionUser(req);
+    if (!user) {
+      if (socket.data.accountId) {
+        decrementOnline(socket.data.accountId);
+        socket.data.accountId = null;
+      }
+      return null;
+    }
+
+    if (!socket.data.accountId) {
+      socket.data.accountId = user.id;
+      incrementOnline(user.id);
+    }
+
+    return user;
   }
+
+  getUser();
 
   function gameAction(actionName, payloadStr, actionFunc) {
     const user = getUser();
@@ -245,6 +358,13 @@ io.on('connection', (socket) => {
   socket.on('setTierValue', ({ tier, newValue }) => gameAction('Set Tier Value', `${tier} -> ${newValue}`, () => game.setTierValue(tier, newValue)));
   socket.on('resetGame', () => gameAction('Reset Game', '', () => { game.resetGame(); return { success: true }; }));
   socket.on('resetPoints', () => gameAction('Reset Points', '', () => { game.resetPoints(); return { success: true }; }));
+
+  socket.on('disconnect', () => {
+    if (socket.data.accountId) {
+      decrementOnline(socket.data.accountId);
+      socket.data.accountId = null;
+    }
+  });
 });
 
 const PORT = process.env.PORT || 3000;

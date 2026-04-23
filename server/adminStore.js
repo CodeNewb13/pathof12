@@ -110,6 +110,37 @@ class AdminStore {
     await this._save(admins);
     return { success: true };
   }
+
+  async update(id, updates = {}) {
+    const admins = await this._load();
+    const idx = admins.findIndex(a => a.id === id);
+    if (idx === -1) return { success: false, error: 'Admin not found' };
+
+    const admin = admins[idx];
+
+    if (updates.username !== undefined) {
+      const username = String(updates.username).trim();
+      if (!username) return { success: false, error: 'Username cannot be empty' };
+      const existing = admins.find(a => a.username === username && a.id !== id);
+      if (existing) return { success: false, error: 'Username already exists' };
+      admin.username = username;
+    }
+
+    if (updates.password !== undefined) {
+      const password = String(updates.password);
+      if (!password) return { success: false, error: 'Password cannot be empty' };
+      admin.passwordHash = await bcrypt.hash(password, 10);
+    }
+
+    if (updates.role !== undefined) {
+      const role = updates.role === 'admin' ? 'admin' : 'helper';
+      admin.role = role;
+    }
+
+    admins[idx] = admin;
+    await this._save(admins);
+    return { success: true, admin: { id: admin.id, username: admin.username, role: admin.role || 'helper' } };
+  }
 }
 
 module.exports = AdminStore;

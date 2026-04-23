@@ -1,45 +1,85 @@
-# 🏴 CTF Tracker
+# Olympus Games
 
-A real-time web application for running a **Capture the Flag**-style team game. Built for live game management — multiple devices (laptop, tablet, phone) share the same live game state via WebSockets.
+Olympus Games is a real-time, capture-the-flag inspired game control panel for live events.
+
+Teams solve puzzles/challenges and compete for points by capturing posts, defending assets, and using tactical actions. The web app keeps all connected screens in sync, so admins and helpers can run the game from laptops, tablets, or phones at the same time.
 
 ---
 
-## Features
+## Core Gameplay
 
-- **9 posts** grouped by point tier (High / Mid / Low), displayed in side-by-side columns
-- **Real-time sync** — all connected clients update instantly on every action
-- **Point payout timer** — auto-awards points every 30 minutes (configurable), with manual trigger and pause/resume
-- **Edit Mode** — toggle to add/delete/rename posts and add/delete teams without cluttering the normal UI
-- **Persistent state** — game state saved to disk; survives server restarts
+- Real-time shared game state via Socket.IO
+- Team-vs-team point economy with cooldowns and action costs
+- Capture posts to own payout sources
+- Secure posts to extend protection
+- Shield to gain temporary immunity
+- Seek to reveal other teams' current points
+- Steal to transfer points (or break an active shield)
+
+---
+
+## Current Features
+
+### Live Board
+
+- Circular post display with ownership, cooldown, and secure state indicators
+- Team cards with points, action controls, and immunity status chip
+- Event log and pending request queue
+- Round counter next to payout timer
 
 ### Actions
 
 | Action | Description |
 |---|---|
-| 🚩 **Capture** | Take an uncooled post for your team; starts cooldown timer |
-| 💸 **Steal** | Take 30% of a target team's points (costs points) |
-| 🔒 **Secure** | Lock one of your posts; extends its cooldown |
-| 🛡️ **Shield** | Activate immunity — no one can steal from you |
-| ⚔️ **Break Shield** | Strip an immune team's Shield (does not auto-steal) |
+| Capture | Captures an available post for a team and applies post/team cooldowns |
+| Steal | Steals 30% from a target team (costs points) |
+| Secure | Protects an owned post and extends cooldown |
+| Shield | Grants temporary immunity for configured duration |
+| Seek | Reveals two selected target teams' current points |
+
+### Roles and Approval Flow
+
+- Admin accounts can execute actions directly
+- Helper accounts can submit requests for approval
+- Admins can approve/reject queued helper requests
 
 ### Admin Controls
 
-- Manual point adjustments per team (+/- quick buttons or custom input)
-- Remove Secured status from any post
-- Remove Shield from any team
-- Pause / Resume / Reset payout timer
+- Manual point adjustment (+/- quick buttons and custom input)
 - Manual payout trigger
-- Settings panel: team names/colors, cooldown duration, secured cooldown multiplier, payout interval, all action costs
-- Tier value adjustment: change pts/cycle for an entire tier mid-game
+- Pause/resume/reset payout timer
+- Remove secure status from posts
+- Remove active shield from teams
+- Add/delete/rename posts
+- Add/delete/edit teams
+- Reset points or reset full game
+
+### Settings
+
+- Payout interval
+- Post cooldowns (capture, secure)
+- Team action cooldowns (capture, steal, secure, shield, seek)
+- Shield duration
+- Action costs (capture, steal, secure %, shield, seek)
+- Tier values (high/low)
+
+---
+
+## Persistence and Sessions
+
+- Game state is persisted to `data/gameState.json`
+- Admin accounts use Redis storage when `REDIS_URL` is available, with file fallback for local development
+- Session/auth uses `express-session`, with Redis session store in production when configured
 
 ---
 
 ## Tech Stack
 
-- **Backend:** Node.js + Express
-- **Real-time:** Socket.io (WebSockets)
-- **Persistence:** JSON file (`data/gameState.json`)
-- **Frontend:** Vanilla HTML/CSS/JS (dark theme, responsive)
+- Backend: Node.js + Express
+- Realtime: Socket.IO
+- Auth Sessions: express-session + connect-redis
+- Data Store: JSON file + optional Redis-backed account/session data
+- Frontend: Vanilla HTML/CSS/JS
 
 ---
 
@@ -47,57 +87,58 @@ A real-time web application for running a **Capture the Flag**-style team game. 
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) v16+
+- Node.js 18+
 
-### Install & Run
+### Install
 
 ```bash
 npm install
+```
+
+### Run
+
+```bash
 npm start
 ```
 
-Open **http://localhost:3000** in your browser. Share the URL on your local network for multi-device access.
-
-For development with auto-restart:
+### Development Mode
 
 ```bash
 npm run dev
 ```
 
----
-
-## Post Tiers (Default)
-
-| Tier | Posts | Points/Cycle |
-|---|---|---|
-| 🔴 High | 2 posts | 50 pts |
-| 🟡 Mid | 3 posts | 40 pts |
-| 🔵 Low | 4 posts | 30 pts |
-
-Tier values can be changed live in Edit Mode → ⚙️ Settings.
+Open `http://localhost:3000`.
 
 ---
 
-## Deployment
+## Deployment Notes
 
-This app is ready to deploy on [Railway](https://railway.app), [Render](https://render.com), or [Fly.io](https://fly.io).
+Recommended env vars:
 
-Set the `PORT` environment variable if needed (defaults to `3000`).
+- `PORT` (optional, defaults to `3000`)
+- `SESSION_SECRET` (required in production)
+- `REDIS_URL` (recommended for production sessions/account storage)
+- `NODE_ENV=production`
+
+When deploying behind HTTPS proxies (e.g., Railway), cookie and proxy settings are already handled in server config.
 
 ---
 
 ## Project Structure
 
-```
-├── server/
-│   ├── index.js        # Express + Socket.io server
-│   ├── gameState.js    # All game logic
-│   └── store.js        # JSON file persistence
+```text
+.
 ├── public/
-│   ├── index.html      # App shell
-│   ├── style.css       # Dark theme styles
-│   └── app.js          # Client-side rendering & socket handling
+│   ├── app.js
+│   ├── index.html
+│   └── style.css
+├── server/
+│   ├── adminStore.js
+│   ├── gameState.js
+│   ├── index.js
+│   └── store.js
 ├── data/
-│   └── gameState.json  # Auto-created on first run (gitignored)
+│   ├── admins.json
+│   └── gameState.json
 └── package.json
 ```

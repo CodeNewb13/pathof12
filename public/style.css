@@ -2,18 +2,18 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg: #0d1117;
-  --bg2: #161b22;
-  --bg3: #21262d;
-  --bg4: #1a2230;
-  --border: #30363d;
-  --text: #c9d1d9;
-  --text-muted: #8b949e;
+  --bg: #0f1524;
+  --bg2: #172033;
+  --bg3: #223049;
+  --bg4: #1b2941;
+  --border: #344766;
+  --text: #e6ecf5;
+  --text-muted: #a9b7cb;
   --green: #2ea043;
   --red: #f85149;
-  --yellow: #d29922;
-  --blue: #388bfd;
-  --purple: #8957e5;
+  --yellow: #d4a017;
+  --blue: #4c8de8;
+  --purple: #8b6bd6;
   --radius: 8px;
   --shadow: 0 4px 16px rgba(0,0,0,0.5);
 }
@@ -21,8 +21,8 @@
 html { font-size: 15px; }
 body {
   background:
-    radial-gradient(1200px 500px at 15% -10%, rgba(56,139,253,0.14), transparent 55%),
-    radial-gradient(900px 400px at 90% 0%, rgba(46,160,67,0.10), transparent 50%),
+    radial-gradient(1100px 520px at 12% -10%, rgba(212,160,23,0.16), transparent 55%),
+    radial-gradient(950px 420px at 92% -5%, rgba(76,141,232,0.18), transparent 52%),
     var(--bg);
   color: var(--text);
   font-family: 'Trebuchet MS', 'Segoe UI', system-ui, sans-serif;
@@ -335,6 +335,13 @@ h1, h2, h3, h4 { font-weight: 650; letter-spacing: 0.01em; }
   padding: 2px 8px;
   background: rgba(56, 139, 253, 0.16);
   box-shadow: 0 0 10px rgba(56, 139, 253, 0.55);
+}
+
+.shield-chip-cooldown {
+  color: #c9d1d9;
+  border: 1px solid rgba(201, 209, 217, 0.45);
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: none;
 }
 
 /* ── Action Groups ────────────────────────────────────────────── */
