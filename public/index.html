@@ -18,6 +18,7 @@
         <span class="payout-label">Next payout in:</span>
         <span id="payout-countdown" class="payout-countdown">--:--</span>
         <span id="round-counter" class="round-counter">Rounds: 0</span>
+        <span id="recovery-status" class="round-counter" style="display:none"></span>
       </div>
       <div class="payout-actions admin-only hidden">
         <button class="btn btn-warning btn-sm" onclick="triggerPayout()">💰 Payout Now</button>
@@ -60,6 +61,14 @@
     </main>
 
     <aside style="flex:1; padding: 16px; border-left: 1px solid var(--border); display: flex; flex-direction: column; gap: 20px;">
+      <!-- Team Locations -->
+      <section id="team-locations-section">
+        <h2 class="section-title">📡 Team Locations</h2>
+        <div id="team-locations-list" style="display:flex; flex-direction: column; gap: 8px;">
+          <p class="log-empty">No team locations yet.</p>
+        </div>
+      </section>
+
       <!-- Requests Stack -->
       <section id="requests-section" class="hidden">
         <h2 class="section-title">🕒 Pending Requests</h2>

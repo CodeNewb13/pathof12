@@ -100,10 +100,11 @@ async function setupSessions() {
   });
 }
 
-const game = new GameState();
+let game;
 let adminStore;
 
 function broadcast() {
+  if (!game) return;
   io.emit('gameState', game.getState());
 }
 
@@ -234,6 +235,7 @@ function registerAuthRoutes() {
 
 // Server-side payout timer check
 setInterval(() => {
+  if (!game) return;
   const s = game.getState();
   let changed = false;
 
@@ -319,12 +321,18 @@ io.on('connection', (socket) => {
     handle({ execute: actionFunc });
   }
 
-  function handle(op) {
+  async function handle(op) {
     let result;
-    if (op.execute) result = op.execute();
-    else if (op.queue) result = op.queue();
-    if (result && result.success === false) socket.emit('actionError', result.error);
-    else broadcast();
+    try {
+      if (op.execute) result = op.execute();
+      else if (op.queue) result = op.queue();
+      if (result && typeof result.then === 'function') result = await result;
+      if (result && result.success === false) socket.emit('actionError', result.error);
+      else broadcast();
+    } catch (error) {
+      console.error('Action handler failed:', error);
+      socket.emit('actionError', 'Action failed');
+    }
   }
 
   const tn = (tid) => game.state.teams.find(t => t.id === tid)?.name || tid;
@@ -356,6 +364,9 @@ io.on('connection', (socket) => {
   socket.on('deletePost', ({ postId }) => gameAction('Delete Post', `${pn(postId)}`, () => game.deletePost(postId)));
   socket.on('renamePost', ({ postId, newName }) => gameAction('Rename Post', `${pn(postId)} -> ${newName}`, () => game.renamePost(postId, newName)));
   socket.on('setTierValue', ({ tier, newValue }) => gameAction('Set Tier Value', `${tier} -> ${newValue}`, () => game.setTierValue(tier, newValue)));
+  socket.on('setTeamLocation', ({ teamId, postId }) => gameAction('Set Team Location', `${tn(teamId)} -> ${pn(postId)}`, () => game.setTeamLocation(teamId, postId)));
+  socket.on('clearTeamLocation', ({ teamId }) => gameAction('Clear Team Location', `${tn(teamId)} -> Idle`, () => game.clearTeamLocation(teamId)));
+  socket.on('recoverGameState', () => verifyAdmin(() => game.recoverLastGoodState()));
   socket.on('resetGame', () => gameAction('Reset Game', '', () => { game.resetGame(); return { success: true }; }));
   socket.on('resetPoints', () => gameAction('Reset Points', '', () => { game.resetPoints(); return { success: true }; }));
 
@@ -381,6 +392,7 @@ async function bootstrap() {
   // Share session with Socket.IO.
   io.use((socket, next) => sessionMiddleware(socket.request, {}, next));
 
+  game = await GameState.create({ redisClient });
   adminStore = new AdminStore({ redisClient });
   await adminStore.seed();
 

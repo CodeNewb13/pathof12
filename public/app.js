@@ -5,6 +5,7 @@ let tickInterval = null;
 let newTeamCounter = 0;
 let editMode = false;
 let authUser = null; // null if not logged in
+let draggingLocationTeamId = null;
 
 // ── Socket ──────────────────────────────────────────────────────
 socket.on('gameState', (state) => {
@@ -35,6 +36,8 @@ function render() {
   if (!gs) return;
   renderPosts();
   renderTeams();
+  renderTeamLocations();
+  renderRecoveryStatus();
   if (authUser) {
     renderEventLog();
     renderRequests();
@@ -45,7 +48,14 @@ function render() {
 // ── Posts ───────────────────────────────────────────────────────
 function renderPosts() {
   const allPosts = gs.posts || [];
-  const radius = allPosts.length <= 1 ? 0 : Math.max(160, allPosts.length * 45); // adjusted spacing
+  const maxTeamsAtAnyPost = allPosts.length
+    ? Math.max(...allPosts.map((post) => gs.teams.filter((t) => t.currentLocationPostId === post.id).length))
+    : 0;
+  const longestHouseLabel = gs.teams && gs.teams.length
+    ? Math.max(...gs.teams.map((t) => fullTeamLabel(t.name).length))
+    : 0;
+  const markerPressure = (maxTeamsAtAnyPost * 8) + (Math.max(0, longestHouseLabel - 7) * 3);
+  const radius = allPosts.length <= 1 ? 0 : Math.max(170 + markerPressure, allPosts.length * 45 + Math.floor(markerPressure / 2)); // adaptive spacing
   const minHeight = allPosts.length === 0 ? '50px' : (radius * 2 + 150) + 'px';
   const boardActions = editMode
     ? `
@@ -80,13 +90,15 @@ function postCard(post, showDelete = false, index = 0, total = 1) {
   const postBorder = team ? team.color : (isHigh ? '#ff8888' : '#88ccff');
   const borderWidth = team ? '4px' : '2px';
   const shadow = team ? `box-shadow: 0 0 12px ${team.color};` : '';
+  const teamsAtPost = gs.teams.filter(t => t.currentLocationPostId === post.id);
+  const baseOrbitRadius = 108;
   
   // Calculate angle for circular layout (in degrees)
   const angle = total > 1 ? (index * 360 / total) : 0;
   const radius = total <= 1 ? 0 : Math.max(160, total * 45); // match container spacing
 
   return `
-<div class="post-card${post.isSecured ? ' secured' : ''}" style="border: ${borderWidth} solid ${postBorder}; ${bgStyle} ${shadow} --angle: ${angle}deg; --radius: ${radius}px; text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 16px 12px; gap: 8px;" data-angle="${angle}">
+<div class="post-card${post.isSecured ? ' secured' : ''}" style="border: ${borderWidth} solid ${postBorder}; ${bgStyle} ${shadow} --angle: ${angle}deg; --radius: ${radius}px; text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 16px 12px; gap: 8px;" data-angle="${angle}" data-post-id="${post.id}" ondragover="handleLocationDragOver(event, '${post.id}')" ondragleave="handleLocationDragLeave(event)" ondrop="handleLocationDrop(event, '${post.id}')">
   ${showDelete
     ? `<button class="btn-delete-corner" onclick="confirmDeletePost('${post.id}')" title="Delete post">🗑</button>`
     : ''}
@@ -112,7 +124,33 @@ function postCard(post, showDelete = false, index = 0, total = 1) {
   ${post.isSecured && authUser
     ? `<button class="btn btn-xs btn-secondary" style="margin-top: 6px;" onclick="unsecurePost('${post.id}')">🔓 Remove Secure</button>`
     : ''}
+  <div class="post-team-orbit${teamsAtPost.length ? '' : ' hidden'}">
+    ${teamsAtPost.map((t, idx) => {
+      const count = Math.max(teamsAtPost.length, 1);
+      const angle = -90 + (idx * 360 / count);
+      const lane = Math.floor(idx / 12);
+      const orbitRadius = baseOrbitRadius + lane * 16;
+      return `<div class="post-team-marker" style="--orbit-angle:${angle}deg; --orbit-radius:${orbitRadius}px; --team-color:${t.color}; --team-color-soft:${hexToRgba(t.color, 0.28)}; --team-color-glow:${hexToRgba(t.color, 0.45)};" title="${escHtml(t.name)}">
+        <span class="post-team-marker-name">${escHtml(fullTeamLabel(t.name))}</span>
+        ${authUser ? `<button class="post-team-marker-clear" onclick="clearTeamLocation('${t.id}')" title="Set ${escHtml(t.name)} to idle">×</button>` : ''}
+      </div>`;
+    }).join('')}
+  </div>
 </div>`;
+}
+
+function fullTeamLabel(name) {
+  const cleaned = String(name || '').replace(/^House\s+/i, '').trim();
+  return cleaned || 'Team';
+}
+
+function hexToRgba(hex, alpha) {
+  const cleaned = String(hex || '').replace('#', '').trim();
+  if (!/^[0-9a-fA-F]{6}$/.test(cleaned)) return `rgba(80, 100, 130, ${alpha})`;
+  const r = parseInt(cleaned.slice(0, 2), 16);
+  const g = parseInt(cleaned.slice(2, 4), 16);
+  const b = parseInt(cleaned.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 // ── Teams ───────────────────────────────────────────────────────
@@ -122,6 +160,7 @@ function renderTeams() {
     : '';
   document.getElementById('teams-grid').innerHTML =
     addBtn + gs.teams.map(teamCard).join('');
+  syncAllCaptureTargets();
 }
 
 function teamCard(team) {
@@ -130,15 +169,16 @@ function teamCard(team) {
   const isHelper = authUser && authUser.role === 'helper';
   const others = gs.teams.filter(t => t.id !== team.id);
   const ownedUnsecured = gs.posts.filter(p => p.owningTeamId === team.id && !p.isSecured);
-  const shieldRem = getShieldRemainingMs(team);
-  const shieldActive = team.hasSafe && shieldRem > 0;
-  const shieldInCooldown = !team.hasSafe && shieldRem > 0;
+  const shieldActiveRem = getShieldActiveRemainingMs(team);
+  const shieldCooldownRem = getShieldCooldownRemainingMs(team);
+  const shieldActive = team.hasSafe && shieldActiveRem > 0;
+  const shieldInCooldown = shieldCooldownRem > 0;
   const canSeek = others.length >= 2;
+  const secureBlockers = getSecureBlockers(team.id);
+  const secureBlocked = secureBlockers.length > 0;
+  const secureBlockedBy = secureBlockers.map(t => t.name).join(', ');
   const now = Date.now();
-  const availCapture = gs.posts.filter(p => {
-    const cd = p.cooldownEndsAt && now < p.cooldownEndsAt;
-    return !cd && p.owningTeamId !== team.id;
-  });
+  const availCapture = gs.posts;
 
   return `
 <div class="team-card">
@@ -147,7 +187,7 @@ function teamCard(team) {
     <span>${escHtml(team.name)}</span>
     <div style="display:flex;gap:6px;align-items:center">
       ${shieldActive ? '<span class="safe-badge safe-badge-active">🛡️ Active</span>' : ''}
-      ${shieldInCooldown ? '<span class="safe-badge">In Cooldown</span>' : ''}
+      ${shieldInCooldown && !shieldActive ? '<span class="safe-badge">Shield Cooldown</span>' : ''}
       ${isLogged && shieldActive ? `<button class="btn btn-xs btn-secondary" onclick="removeShield('${team.id}')">✕ Remove</button>` : ''}
     </div>
   </div>
@@ -155,7 +195,10 @@ function teamCard(team) {
     <div class="team-points">
       <span class="points-label">Points:</span>
       <span class="points-value" style="color:${team.color}">${team.points}</span>
-      <span id="shield-chip-${team.id}" class="shield-chip${shieldActive || shieldInCooldown ? '' : ' hidden'}${shieldInCooldown ? ' shield-chip-cooldown' : ''}">${shieldActive ? `🛡️ ${fmtTime(shieldRem)}` : (shieldInCooldown ? `In Cooldown ${fmtTime(shieldRem)}` : '')}</span>
+      <div class="shield-timers">
+        <span id="shield-active-chip-${team.id}" class="shield-chip${shieldActive ? '' : ' hidden'}">🛡️ ${fmtTime(shieldActiveRem)}</span>
+        <span id="shield-cooldown-chip-${team.id}" class="shield-chip shield-chip-cooldown${shieldInCooldown ? '' : ' hidden'}">⏳ Shield Cooldown ${fmtTime(shieldCooldownRem)}</span>
+      </div>
     </div>
 
     ${isLogged ? `
@@ -165,7 +208,7 @@ function teamCard(team) {
       <!-- Capture -->
       <div class="action-row">
         <button id="btn-capture-${team.id}" class="btn btn-success btn-xs" data-orig="🚩 Capture" onclick="capturePost('${team.id}')">🚩 Capture</button>
-        <select class="action-select" id="cap-${team.id}">
+        <select class="action-select" id="cap-${team.id}" onchange="syncAllCaptureTargets()">
           <option value="">— select post —</option>
           ${availCapture.map(p => {
             const owner = gs.teams.find(t2 => t2.id === p.owningTeamId);
@@ -185,12 +228,13 @@ function teamCard(team) {
 
       <!-- Secure -->
       <div class="action-row">
-        <button id="btn-secure-${team.id}" class="btn btn-info btn-xs" data-orig="🔒 Secure (50% pts)" onclick="securePost('${team.id}')"> 🔒 Secure (50% pts)</button>
+        <button id="btn-secure-${team.id}" class="btn btn-info btn-xs" data-orig="🔒 Secure (50% pts)" onclick="securePost('${team.id}')" ${secureBlocked ? 'disabled' : ''}> 🔒 Secure (50% pts)</button>
         <select class="action-select" id="sec-${team.id}">
           <option value="">— select post —</option>
           ${ownedUnsecured.map(p => `<option value="${p.id}">${p.name}</option>`).join('')}
         </select>
       </div>
+      ${secureBlocked ? `<div class="action-hint action-hint-warn">Secure blocked: ${escHtml(secureBlockedBy)} is capturing your post.</div>` : ''}
 
       <!-- Shield -->
       <div class="action-row">
@@ -228,6 +272,81 @@ function teamCard(team) {
     ` : ''}
   </div>
 </div>`;
+}
+
+function renderTeamLocations() {
+  const wrap = document.getElementById('team-locations-list');
+  if (!wrap || !gs || !Array.isArray(gs.teams)) return;
+  const canDragLocation = !!authUser;
+
+  const teamsForDisplay = [...gs.teams].sort((a, b) => {
+    const aCapturing = !!a.captureTargetTeamId;
+    const bCapturing = !!b.captureTargetTeamId;
+    if (aCapturing !== bCapturing) return aCapturing ? -1 : 1;
+
+    const aLocated = !!a.currentLocationPostId;
+    const bLocated = !!b.currentLocationPostId;
+    if (aLocated !== bLocated) return aLocated ? -1 : 1;
+
+    return a.name.localeCompare(b.name);
+  });
+
+  const rows = teamsForDisplay.map((team) => {
+    const locationPost = gs.posts.find(p => p.id === team.currentLocationPostId);
+    const targetTeam = gs.teams.find(t => t.id === team.captureTargetTeamId);
+
+    let status = 'Idle';
+    if (locationPost && targetTeam) {
+      status = `At ${locationPost.name} (capturing ${targetTeam.name})`;
+    } else if (locationPost) {
+      status = `At ${locationPost.name}`;
+    }
+
+    return `
+      <div class="location-row${canDragLocation ? ' location-row-draggable' : ''}" ${canDragLocation ? `draggable="true" ondragstart="startLocationDrag(event, '${team.id}')" ondragend="endLocationDrag(event)"` : ''}>
+        <span class="location-team"><span class="location-dot" style="background:${team.color}"></span>${escHtml(team.name)}${canDragLocation ? ' ⋮⋮' : ''}</span>
+        <span class="location-status">${escHtml(status)}</span>
+      </div>
+    `;
+  }).join('');
+
+  wrap.innerHTML = rows || '<p class="log-empty">No team locations yet.</p>';
+}
+
+function startLocationDrag(event, teamId) {
+  draggingLocationTeamId = teamId;
+  event.dataTransfer.effectAllowed = 'move';
+  event.dataTransfer.setData('text/plain', teamId);
+}
+
+function endLocationDrag() {
+  draggingLocationTeamId = null;
+  document.querySelectorAll('.post-card.post-drop-target').forEach((el) => el.classList.remove('post-drop-target'));
+}
+
+function handleLocationDragOver(event) {
+  if (!draggingLocationTeamId) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = 'move';
+  event.currentTarget.classList.add('post-drop-target');
+}
+
+function handleLocationDragLeave(event) {
+  event.currentTarget.classList.remove('post-drop-target');
+}
+
+function handleLocationDrop(event, postId) {
+  if (!draggingLocationTeamId) return;
+  event.preventDefault();
+  event.stopPropagation();
+  event.currentTarget.classList.remove('post-drop-target');
+  socket.emit('setTeamLocation', { teamId: draggingLocationTeamId, postId });
+  draggingLocationTeamId = null;
+}
+
+function getSecureBlockers(teamId) {
+  if (!gs || !Array.isArray(gs.teams)) return [];
+  return gs.teams.filter(t => t.id !== teamId && t.captureTargetTeamId === teamId);
 }
 
 // ── Event Log & Requests ─────────────────────────────────────────
@@ -334,19 +453,29 @@ function tick() {
 
   // Action cooldowns
   gs.teams.forEach(t => {
+    const secureBlocked = getSecureBlockers(t.id).length > 0;
     ['capture', 'steal', 'secure', 'shield', 'seek'].forEach(act => {
       const btn = document.getElementById(`btn-${act}-${t.id}`);
       if (btn) {
         const cdEnds = t.cooldowns?.[act] || 0;
         const rem = Math.max(0, cdEnds - now);
         const orig = btn.dataset.orig || '';
-        const shieldRem = getShieldRemainingMs(t);
-        const shieldActive = t.hasSafe && shieldRem > 0;
-        const shieldInCooldown = !t.hasSafe && shieldRem > 0;
+        const shieldActiveRem = getShieldActiveRemainingMs(t);
+        const shieldCooldownRem = getShieldCooldownRemainingMs(t);
+        const shieldActive = t.hasSafe && shieldActiveRem > 0;
+        const shieldInCooldown = shieldCooldownRem > 0;
 
         if (act === 'shield') {
           btn.textContent = orig;
           btn.disabled = shieldActive || shieldInCooldown || rem > 0;
+        } else if (act === 'secure') {
+          if (rem > 0) {
+            btn.textContent = `${orig} (⏳ ${fmtTime(rem)})`;
+            btn.disabled = true;
+          } else {
+            btn.textContent = orig;
+            btn.disabled = secureBlocked;
+          }
         } else if (rem > 0) {
           btn.textContent = `${orig} (⏳ ${fmtTime(rem)})`;
           btn.disabled = true;
@@ -357,30 +486,33 @@ function tick() {
       }
     });
 
-    const shieldChip = document.getElementById(`shield-chip-${t.id}`);
-    if (shieldChip) {
-      const shieldRem = getShieldRemainingMs(t);
-      const shieldActive = t.hasSafe && shieldRem > 0;
-      const shieldInCooldown = !t.hasSafe && shieldRem > 0;
-      if (shieldActive) {
-        shieldChip.textContent = `🛡️ ${fmtTime(shieldRem)}`;
-        shieldChip.classList.remove('shield-chip-cooldown');
-        shieldChip.classList.remove('hidden');
-      } else if (shieldInCooldown) {
-        shieldChip.textContent = `In Cooldown ${fmtTime(shieldRem)}`;
-        shieldChip.classList.add('shield-chip-cooldown');
-        shieldChip.classList.remove('hidden');
-      } else {
-        shieldChip.classList.remove('shield-chip-cooldown');
-        shieldChip.classList.add('hidden');
-      }
+    const shieldActiveChip = document.getElementById(`shield-active-chip-${t.id}`);
+    if (shieldActiveChip) {
+      const shieldActiveRem = getShieldActiveRemainingMs(t);
+      const shieldActive = t.hasSafe && shieldActiveRem > 0;
+      shieldActiveChip.textContent = `🛡️ ${fmtTime(shieldActiveRem)}`;
+      shieldActiveChip.classList.toggle('hidden', !shieldActive);
+    }
+
+    const shieldCooldownChip = document.getElementById(`shield-cooldown-chip-${t.id}`);
+    if (shieldCooldownChip) {
+      const shieldCooldownRem = getShieldCooldownRemainingMs(t);
+      shieldCooldownChip.textContent = `⏳ Shield Cooldown ${fmtTime(shieldCooldownRem)}`;
+      shieldCooldownChip.classList.toggle('hidden', shieldCooldownRem <= 0);
     }
   });
+
+  syncAllCaptureTargets();
 }
 
-function getShieldRemainingMs(team) {
+function getShieldActiveRemainingMs(team) {
   if (!team || !team.safeEndsAt) return 0;
   return Math.max(0, team.safeEndsAt - Date.now());
+}
+
+function getShieldCooldownRemainingMs(team) {
+  if (!team || !team.shieldCooldownEndsAt) return 0;
+  return Math.max(0, team.shieldCooldownEndsAt - Date.now());
 }
 
 function syncSeekTargets(teamId) {
@@ -397,6 +529,41 @@ function syncSeekTargets(teamId) {
   if (selectedFirst && second.value === selectedFirst) {
     second.value = '';
   }
+}
+
+function syncAllCaptureTargets() {
+  if (!gs || !Array.isArray(gs.teams)) return;
+
+  const selectedByTeam = new Map();
+  gs.teams.forEach((team) => {
+    const select = document.getElementById(`cap-${team.id}`);
+    if (!select) return;
+    const value = select.value;
+    if (value) selectedByTeam.set(team.id, value);
+  });
+
+  gs.teams.forEach((team) => {
+    const select = document.getElementById(`cap-${team.id}`);
+    if (!select) return;
+
+    Array.from(select.options).forEach((opt) => {
+      if (!opt.value) return;
+      const post = gs.posts.find(p => p.id === opt.value);
+      if (!post) return;
+      const owner = gs.teams.find(t2 => t2.id === post.owningTeamId);
+      const now = Date.now();
+      const cooldownRem = post.cooldownEndsAt && now < post.cooldownEndsAt ? (post.cooldownEndsAt - now) : 0;
+      const cooldownDisabled = cooldownRem > 0;
+      const takenByOther = Array.from(selectedByTeam.entries()).some(([otherTeamId, postId]) => otherTeamId !== team.id && postId === opt.value);
+
+      opt.disabled = cooldownDisabled || takenByOther;
+
+      let label = `${post.name} (${post.pointValue}pts)${owner ? ' · ' + owner.name : ' · Unowned'}`;
+      if (cooldownDisabled) label += ` (In cooldown ${fmtTime(cooldownRem)})`;
+      if (takenByOther) label += ' (Taken)';
+      opt.textContent = label;
+    });
+  });
 }
 
 function fmtTime(ms) {
@@ -425,7 +592,7 @@ function capturePost(teamId) {
 function collectCaptureSelections() {
   if (!gs || !Array.isArray(gs.teams)) return [];
 
-  return gs.teams
+  const selections = gs.teams
     .map(team => {
       const select = document.getElementById(`cap-${team.id}`);
       const postId = select ? select.value : '';
@@ -442,6 +609,18 @@ function collectCaptureSelections() {
       };
     })
     .filter(Boolean);
+
+  const selectedPostIds = selections.map(item => item.postId);
+  if (new Set(selectedPostIds).size !== selectedPostIds.length) {
+    showToast('A post can only be selected by one team at a time', 'warn');
+    return [];
+  }
+
+  return selections;
+}
+
+function clearTeamLocation(teamId) {
+  socket.emit('clearTeamLocation', { teamId });
 }
 
 function steal(actingTeamId) {
@@ -464,6 +643,12 @@ function steal(actingTeamId) {
 }
 
 function securePost(actingTeamId) {
+  const blockers = getSecureBlockers(actingTeamId);
+  if (blockers.length) {
+    showToast(`Secure blocked: ${blockers.map(t => t.name).join(', ')} is capturing your post`, 'warn');
+    return;
+  }
+
   const postId = document.getElementById(`sec-${actingTeamId}`).value;
   if (!postId) { showToast('Select a post to secure', 'warn'); return; }
   const team = gs.teams.find(t => t.id === actingTeamId);
@@ -576,6 +761,11 @@ function confirmResetPoints() {
     () => socket.emit('resetPoints'));
 }
 
+function confirmRecovery() {
+  confirmAction('♻ Restore the last good save snapshot? This overwrites the current live state if the backup is available.',
+    () => socket.emit('recoverGameState'));
+}
+
 // ── Settings ─────────────────────────────────────────────────────
 function openSettings() {
   if (!gs || !authUser) return;
@@ -583,7 +773,8 @@ function openSettings() {
   const tv = s.tierValues || { high: 50, low: 30 };
   const postCd = s.postCooldowns || { capture: 5, secure: 10 };
   const actCd = s.actionCooldowns || { capture: 0, steal: 5, secure: 0, shield: 0, seek: 0 };
-  const shieldDuration = s.shieldDuration ?? 10;
+  const shieldDuration = s.shieldDuration ?? 15;
+  const shieldCooldownMinutes = s.shieldCooldownMinutes ?? 10;
   
   let html = `
     <div style="display:flex;gap:24px;flex-wrap:wrap">
@@ -607,6 +798,8 @@ function openSettings() {
             <label>Seek Ability <input type="number" id="set-tcd-seek" value="${actCd.seek}"></label>
             <label>Shield Duration <input type="number" id="set-shield-duration" value="${shieldDuration}"></label>
             <div style="font-size:0.75rem; color:var(--text-muted); margin-top:-4px; margin-bottom:12px;">How long Shield immunity stays active after activation.</div>
+            <label>Shield Cooldown <input type="number" id="set-shield-cooldown" value="${shieldCooldownMinutes}"></label>
+            <div style="font-size:0.75rem; color:var(--text-muted); margin-top:-4px; margin-bottom:12px;">How long a team must wait before buying another Shield.</div>
             
             <h3 style="margin-top:16px;">Point Tier Values</h3>
             <label>High Tier <input type="number" id="set-high-tier" value="${tv.high}"></label>
@@ -632,11 +825,28 @@ function openSettings() {
             `).join('')}
           </div>
           <button class="btn btn-sm btn-success" style="margin-top:8px;" onclick="addTeamRow()">+ Add Team</button>
+
+          <h3 style="margin-top:16px;">Recovery</h3>
+          <div style="font-size:0.8rem; color:var(--text-muted); margin-bottom:8px;">Restore the last known-good snapshot if the live state becomes corrupted or incomplete.</div>
+          <button class="btn btn-warning btn-sm" onclick="confirmRecovery()">♻ Restore Last Good Save</button>
         </div>
       </div>
     `;
     document.getElementById('settings-body').innerHTML = html;
     document.getElementById('settings-modal').classList.remove('hidden');
+}
+
+function renderRecoveryStatus() {
+  const el = document.getElementById('recovery-status');
+  if (!el || !gs) return;
+  const info = gs.recovery || {};
+  if (info.available) {
+    el.style.display = 'inline-block';
+    el.textContent = info.recoveredAt ? 'Recovered snapshot available' : 'Recovery ready';
+  } else {
+    el.style.display = 'none';
+    el.textContent = '';
+  }
 }
 
 function addTeamRow() {
@@ -677,7 +887,8 @@ function saveSettings() {
       shield: getFloat('set-tcd-shield', 0),
       seek: getFloat('set-tcd-seek', 0)
     },
-    shieldDuration: getFloat('set-shield-duration', 10),
+    shieldDuration: getFloat('set-shield-duration', 15),
+    shieldCooldownMinutes: getFloat('set-shield-cooldown', 10),
     costs: {
       capture: getInt('set-cost-cap', 0),
       steal: getInt('set-cost-steal', 50),

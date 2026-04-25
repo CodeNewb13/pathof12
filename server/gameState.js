@@ -17,7 +17,8 @@ const OLYMPUS_TEAMS = [
 const DEFAULT_SETTINGS = {
   postCooldowns: { capture: 5, secure: 10 },
   actionCooldowns: { capture: 0, steal: 5, secure: 0, shield: 0, seek: 0 },
-  shieldDuration: 10,
+  shieldDuration: 15,
+  shieldCooldownMinutes: 10,
   payoutInterval: 30,
   costs: { steal: 50, safe: 40, breakSafe: 80, capture: 0, secure: 50, seek: 0 },
   tierValues: { high: 50, low: 30 },
@@ -28,7 +29,7 @@ function createDefaultState() {
   const now = Date.now();
   return {
     settings: JSON.parse(JSON.stringify(DEFAULT_SETTINGS)),
-    teams: DEFAULT_SETTINGS.teams.map(t => ({ ...t, points: 0, hasSafe: false, safeEndsAt: null, cooldowns: { capture: 0, steal: 0, secure: 0, shield: 0, seek: 0 } })),
+    teams: DEFAULT_SETTINGS.teams.map(t => ({ ...t, points: 0, hasSafe: false, safeEndsAt: null, shieldCooldownEndsAt: null, currentLocationPostId: null, captureTargetTeamId: null, cooldowns: { capture: 0, steal: 0, secure: 0, shield: 0, seek: 0 } })),
     posts: POST_NAMES.map((name, i) => ({
       id: `post_${name}`,
       name,
@@ -41,12 +42,25 @@ function createDefaultState() {
     roundCount: 0,
     timerPaused: false,
     pausedTimeRemaining: null,
+    recovery: { available: false, recoveredAt: null, reason: null },
     eventLog: [],
     requestsQueue: []
   };
 }
 
 class GameState {
+  constructor(options = {}) {
+    this.requestFunctions = {};
+    this.store = new Store(options);
+    this.state = createDefaultState();
+  }
+
+  static async create(options = {}) {
+    const instance = new GameState(options);
+    await instance.init();
+    return instance;
+  }
+
   _sanitizeNonNegativeNumber(value, fallback = 0) {
     const n = Number(value);
     if (!Number.isFinite(n) || n < 0) return fallback;
@@ -68,13 +82,21 @@ class GameState {
     this.state.settings.actionCooldowns.seek = this._sanitizeNonNegativeNumber(this.state.settings.actionCooldowns.seek, DEFAULT_SETTINGS.actionCooldowns.seek);
 
     this.state.settings.shieldDuration = this._sanitizeNonNegativeNumber(this.state.settings.shieldDuration, DEFAULT_SETTINGS.shieldDuration);
+    this.state.settings.shieldCooldownMinutes = this._sanitizeNonNegativeNumber(this.state.settings.shieldCooldownMinutes, DEFAULT_SETTINGS.shieldCooldownMinutes);
   }
 
-  constructor() {
-    this.requestFunctions = {};
-    this.store = new Store();
-    const loaded = this.store.load();
+  async init() {
+    const loaded = await this.store.load();
     this.state = loaded || createDefaultState();
+
+    if (!this.state.recovery) {
+      this.state.recovery = { available: false, recoveredAt: null, reason: null };
+    }
+    if (this.store.lastLoadSource === 'redis-backup' || this.store.lastLoadSource === 'file-backup') {
+      this.state.recovery.available = true;
+      this.state.recovery.recoveredAt = Date.now();
+      this.state.recovery.reason = 'Loaded from backup snapshot on startup';
+    }
     
     this.state.requestsQueue = [];
 
@@ -109,6 +131,10 @@ class GameState {
       this.state.settings.shieldDuration = DEFAULT_SETTINGS.shieldDuration;
       dirty = true;
     }
+    if (this.state.settings.shieldCooldownMinutes === undefined) {
+      this.state.settings.shieldCooldownMinutes = DEFAULT_SETTINGS.shieldCooldownMinutes;
+      dirty = true;
+    }
     if (this.state.settings.tierValues && this.state.settings.tierValues.mid !== undefined) {
       delete this.state.settings.tierValues.mid;
       dirty = true;
@@ -117,15 +143,38 @@ class GameState {
       this.state.roundCount = 0;
       dirty = true;
     }
+
+    if (this.state.recovery.available === undefined) {
+      this.state.recovery.available = false;
+      this.state.recovery.recoveredAt = null;
+      this.state.recovery.reason = null;
+      dirty = true;
+    }
     
     for (const t of this.state.teams) {
       if (!t.cooldowns) {
         t.cooldowns = { capture: 0, steal: 0, secure: 0, shield: 0, seek: 0 };
         dirty = true;
       }
+      if (t.currentLocationPostId === undefined) {
+        t.currentLocationPostId = null;
+        dirty = true;
+      }
+      if (t.captureTargetTeamId === undefined) {
+        t.captureTargetTeamId = null;
+        dirty = true;
+      }
       if (t.safeEndsAt === undefined) {
         const durationMs = this._sanitizeNonNegativeNumber(this.state.settings.shieldDuration, DEFAULT_SETTINGS.shieldDuration) * 60000;
         t.safeEndsAt = t.hasSafe ? (Date.now() + durationMs) : null;
+        dirty = true;
+      }
+      if (t.shieldCooldownEndsAt === undefined) {
+        const durationMs = this._sanitizeNonNegativeNumber(this.state.settings.shieldDuration, DEFAULT_SETTINGS.shieldDuration) * 60000;
+        const cooldownMs = this._sanitizeNonNegativeNumber(this.state.settings.shieldCooldownMinutes, DEFAULT_SETTINGS.shieldCooldownMinutes) * 60000;
+        t.shieldCooldownEndsAt = t.hasSafe && t.safeEndsAt
+          ? Math.max(0, t.safeEndsAt - durationMs) + cooldownMs
+          : null;
         dirty = true;
       }
       if (t.hasSafe && !t.safeEndsAt) {
@@ -148,6 +197,23 @@ class GameState {
 
   getState() { return this.state; }
   save() { this.store.save(this.state); }
+
+  getRecoveryInfo() {
+    return this.state.recovery || { available: false, recoveredAt: null, reason: null };
+  }
+
+  async recoverLastGoodState() {
+    const result = await this.store.recover();
+    if (!result.success) return result;
+
+    this.state = result.state;
+    if (!this.state.recovery) this.state.recovery = { available: false, recoveredAt: null, reason: null };
+    this.state.recovery.available = true;
+    this.state.recovery.recoveredAt = Date.now();
+    this.state.recovery.reason = 'Recovered from last good snapshot';
+    await this.save();
+    return { success: true };
+  }
 
   log(message) {
     const now = new Date();
@@ -189,6 +255,10 @@ class GameState {
   getTeam(teamId) { return this.state.teams.find(t => t.id === teamId); }
   getPost(postId) { return this.state.posts.find(p => p.id === postId); }
 
+  getSecureBlockers(teamId) {
+    return this.state.teams.filter(t => t.id !== teamId && t.captureTargetTeamId === teamId);
+  }
+
   checkTeamCooldown(teamId, actionName) {
     const team = this.getTeam(teamId);
     if (!team) return { success: false, error: 'Team not found' };
@@ -219,6 +289,10 @@ class GameState {
         if (wasActive) this.log(`${team.name}'s Shield expired`);
         changed = true;
       }
+      if (team.shieldCooldownEndsAt && now >= team.shieldCooldownEndsAt) {
+        team.shieldCooldownEndsAt = null;
+        changed = true;
+      }
     }
     if (changed) this.save();
     return changed;
@@ -242,10 +316,13 @@ class GameState {
     }
 
     team.points -= cost;
-    const prevOwner = post.owningTeamId ? this.getTeam(post.owningTeamId)?.name : null;
+    const prevOwnerId = post.owningTeamId || null;
+    const prevOwner = prevOwnerId ? this.getTeam(prevOwnerId)?.name : null;
     post.owningTeamId = teamId;
     post.isSecured = false;
     post.cooldownEndsAt = now + this.state.settings.postCooldowns.capture * 60 * 1000;
+    team.currentLocationPostId = postId;
+    team.captureTargetTeamId = prevOwnerId && prevOwnerId !== teamId ? prevOwnerId : null;
 
     const msg = prevOwner
       ? `${team.name} captured ${post.name} from ${prevOwner} (cooldown: ${this.state.settings.postCooldowns.capture} min)`
@@ -270,7 +347,8 @@ class GameState {
       
       actor.points -= shieldCost;
       target.hasSafe = false;
-      // Keep safeEndsAt running so the client can show "In Cooldown" countdown.
+      target.safeEndsAt = null;
+      // Keep shieldCooldownEndsAt running so the client can show the rebuy lockout countdown.
 
       this.log(`${actor.name} broke ${target.name}'s shield with Steal (cost: ${shieldCost} pts)`);
       this.applyTeamCooldown(actingTeamId, 'steal');
@@ -299,6 +377,12 @@ class GameState {
     
     const cdCheck = this.checkTeamCooldown(actingTeamId, 'secure');
     if (!cdCheck.success) return cdCheck;
+
+    const blockers = this.getSecureBlockers(actingTeamId);
+    if (blockers.length) {
+      const names = blockers.map(t => t.name).join(', ');
+      return { success: false, error: `Cannot secure while your post is being captured by: ${names}` };
+    }
 
     if (post.owningTeamId !== actingTeamId) return { success: false, error: 'You do not own this post' };
     if (post.isSecured) return { success: false, error: 'Post is already secured' };
@@ -331,11 +415,18 @@ class GameState {
       actor.hasSafe = false;
       actor.safeEndsAt = null;
     }
+    if (actor.shieldCooldownEndsAt && now >= actor.shieldCooldownEndsAt) {
+      actor.shieldCooldownEndsAt = null;
+    }
     
     const cdCheck = this.checkTeamCooldown(actingTeamId, 'shield');
     if (!cdCheck.success) return cdCheck;
 
     if (actor.hasSafe) return { success: false, error: 'Already has immunity' };
+    if (actor.shieldCooldownEndsAt && now < actor.shieldCooldownEndsAt) {
+      const waitMins = Math.ceil((actor.shieldCooldownEndsAt - now) / 60000);
+      return { success: false, error: `${actor.name} cannot buy another Shield for ${waitMins}m` };
+    }
 
     const cost = this.state.settings.costs.safe;
     if (actor.points < cost) return { success: false, error: `Not enough points (need ${cost}, have ${actor.points})` };
@@ -343,9 +434,11 @@ class GameState {
     actor.points -= cost;
     actor.hasSafe = true;
     const durationMins = this._sanitizeNonNegativeNumber(this.state.settings.shieldDuration, DEFAULT_SETTINGS.shieldDuration);
+    const cooldownMins = this._sanitizeNonNegativeNumber(this.state.settings.shieldCooldownMinutes, DEFAULT_SETTINGS.shieldCooldownMinutes);
     actor.safeEndsAt = now + durationMins * 60000;
+    actor.shieldCooldownEndsAt = now + cooldownMins * 60000;
 
-    this.log(`${actor.name} activated Shield (immunity) for ${durationMins}m (cost: ${cost} pts)`);
+    this.log(`${actor.name} activated Shield (immunity) for ${durationMins}m; rebuy lockout ${cooldownMins}m (cost: ${cost} pts)`);
     this.applyTeamCooldown(actingTeamId, 'shield');
     this.save();
     return { success: true };
@@ -442,6 +535,31 @@ class GameState {
     return { success: true };
   }
 
+  setTeamLocation(teamId, postId) {
+    const team = this.getTeam(teamId);
+    const post = this.getPost(postId);
+    if (!team) return { success: false, error: 'Team not found' };
+    if (!post) return { success: false, error: 'Post not found' };
+
+    team.currentLocationPostId = post.id;
+    team.captureTargetTeamId = post.owningTeamId && post.owningTeamId !== team.id ? post.owningTeamId : null;
+
+    this.log(`${team.name} is now at ${post.name}`);
+    this.save();
+    return { success: true };
+  }
+
+  clearTeamLocation(teamId) {
+    const team = this.getTeam(teamId);
+    if (!team) return { success: false, error: 'Team not found' };
+
+    team.currentLocationPostId = null;
+    team.captureTargetTeamId = null;
+    this.log(`Location updated: ${team.name} is now Idle`);
+    this.save();
+    return { success: true };
+  }
+
   _nextPostName() {
     const used = new Set(this.state.posts.map(p => p.name.replace('Post ', '')));
     for (let i = 0; i < 26; i++) {
@@ -476,6 +594,12 @@ class GameState {
     const post = this.getPost(postId);
     if (!post) return { success: false, error: 'Post not found' };
     this.state.posts = this.state.posts.filter(p => p.id !== postId);
+    for (const team of this.state.teams) {
+      if (team.currentLocationPostId === postId) {
+        team.currentLocationPostId = null;
+        team.captureTargetTeamId = null;
+      }
+    }
     this.log(`Admin removed ${post.name}`);
     this.save();
     return { success: true };
@@ -513,6 +637,7 @@ class GameState {
     if (newSettings.postCooldowns) Object.assign(s.postCooldowns, newSettings.postCooldowns);
     if (newSettings.actionCooldowns) Object.assign(s.actionCooldowns, newSettings.actionCooldowns);
     if (newSettings.shieldDuration != null) s.shieldDuration = newSettings.shieldDuration;
+    if (newSettings.shieldCooldownMinutes != null) s.shieldCooldownMinutes = newSettings.shieldCooldownMinutes;
 
     if (newSettings.payoutInterval != null) {
       s.payoutInterval = newSettings.payoutInterval;
@@ -549,7 +674,7 @@ class GameState {
       for (const updTeam of newSettings.teams) {
         if (String(updTeam.id).startsWith('new_')) {
           const newId = `t_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
-          this.state.teams.push({ id: newId, name: updTeam.name, color: updTeam.color, points: 0, hasSafe: false, safeEndsAt: null, cooldowns: { capture: 0, steal: 0, secure: 0, shield: 0, seek: 0 } });
+          this.state.teams.push({ id: newId, name: updTeam.name, color: updTeam.color, points: 0, hasSafe: false, safeEndsAt: null, shieldCooldownEndsAt: null, currentLocationPostId: null, captureTargetTeamId: null, cooldowns: { capture: 0, steal: 0, secure: 0, shield: 0, seek: 0 } });
           s.teams.push({ id: newId, name: updTeam.name, color: updTeam.color });
         } else {
           const existing = this.state.teams.find(t => t.id === updTeam.id);
