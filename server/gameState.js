@@ -256,6 +256,7 @@ class GameState {
     this.requestFunctions[id] = actionFunc;
     this.state.requestsQueue.push({ id, username, actionName, payloadStr, timestamp: Date.now() });
     this.log(`Helper ${username} requested: ${actionName} (${payloadStr})`);
+    this.save();
     return { success: true };
   }
 
@@ -267,7 +268,13 @@ class GameState {
     this.state.requestsQueue.splice(idx, 1);
     delete this.requestFunctions[id];
     this.log(`${approvedBy} approved request: ${req.actionName}`);
-    if (func) return func();
+    if (func) {
+      const result = func();
+      if (result && result.success === false) return result;
+      this.save();
+      return result || { success: true };
+    }
+    this.save();
     return { success: true };
   }
 
@@ -278,6 +285,7 @@ class GameState {
     this.state.requestsQueue.splice(idx, 1);
     delete this.requestFunctions[id];
     this.log(`${rejectedBy} rejected request: ${req.actionName} (requested by ${req.username})`);
+    this.save();
     return { success: true };
   }
 
@@ -752,7 +760,10 @@ class GameState {
   }
 
   resetGame() {
+    const retainedLog = Array.isArray(this.state.eventLog) ? [...this.state.eventLog] : [];
     this.state = createDefaultState();
+    this.state.eventLog = retainedLog.slice(0, 299);
+    this.log('Admin reset full game to defaults');
     this.state.timerPaused = true;
     this.state.globalTimerPausedAt = Date.now();
     this.state.pausedTimeRemaining = this.state.settings.payoutInterval * 60 * 1000;
