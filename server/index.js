@@ -240,12 +240,14 @@ setInterval(() => {
   let changed = false;
 
   const now = Date.now();
-  if (game.clearExpiredShields(now)) changed = true;
+  if (!s.timerPaused) {
+    if (game.clearExpiredShields(now)) changed = true;
 
-  for (const post of s.posts) {
-    if (post.isSecured && post.cooldownEndsAt && now >= post.cooldownEndsAt) {
-      post.isSecured = false;
-      changed = true;
+    for (const post of s.posts) {
+      if (post.isSecured && post.cooldownEndsAt && now >= post.cooldownEndsAt) {
+        post.isSecured = false;
+        changed = true;
+      }
     }
   }
 
@@ -375,6 +377,8 @@ io.on('connection', (socket) => {
   socket.on('setTierValue', ({ tier, newValue }) => gameAction('Set Tier Value', `${tier} -> ${newValue}`, () => game.setTierValue(tier, newValue)));
   socket.on('setTeamLocation', ({ teamId, postId }) => gameAction('Set Team Location', `${tn(teamId)} -> ${pn(postId)}`, () => game.setTeamLocation(teamId, postId)));
   socket.on('clearTeamLocation', ({ teamId }) => gameAction('Clear Team Location', `${tn(teamId)} -> Idle`, () => game.clearTeamLocation(teamId)));
+  socket.on('clearPostCooldown', ({ postId }) => gameAction('Clear Post Timer', `${pn(postId)}`, () => game.clearPostCooldown(postId)));
+  socket.on('clearTeamTimers', ({ teamId }) => gameAction('Clear Team Timers', `${tn(teamId)}`, () => game.clearTeamTimers(teamId)));
   socket.on('recoverGameState', () => verifyAdmin(() => game.recoverLastGoodState()));
   socket.on('resetGame', () => gameAction('Reset Game', '', () => { game.resetGame(); return { success: true }; }));
   socket.on('resetPoints', () => gameAction('Reset Points', '', () => { game.resetPoints(); return { success: true }; }));

@@ -81,8 +81,9 @@ function renderPosts() {
 function postCard(post, showDelete = false, index = 0, total = 1) {
   const team = gs.teams.find(t => t.id === post.owningTeamId);
   const tv = gs.settings.tierValues || { high: 50, low: 30 };
-  const now = Date.now();
+  const now = getEffectiveNow();
   const onCooldown = post.cooldownEndsAt && now < post.cooldownEndsAt;
+  const isAdmin = authUser && authUser.role === 'admin';
 
   const isHigh = post.pointValue === tv.high;
   // Solid colors as requested
@@ -121,6 +122,7 @@ function postCard(post, showDelete = false, index = 0, total = 1) {
       ? `<span class="cooldown-timer" id="cd-${post.id}" data-ends="${post.cooldownEndsAt}">⏳ --:--</span>`
       : (!post.isSecured ? '<span class="capturable-badge" style="background:rgba(0,0,0,0.3); padding:4px 8px; border-radius:4px;">✅ Capturable</span>' : '')}
   </div>
+  ${isAdmin && post.cooldownEndsAt ? `<button class="btn btn-xs btn-secondary" style="margin-top: 6px;" onclick="clearPostCooldown('${post.id}')">⌛ Clear Timer</button>` : ''}
   ${post.isSecured && authUser
     ? `<button class="btn btn-xs btn-secondary" style="margin-top: 6px;" onclick="unsecurePost('${post.id}')">🔓 Remove Secure</button>`
     : ''}
@@ -189,6 +191,7 @@ function teamCard(team) {
       ${shieldActive ? '<span class="safe-badge safe-badge-active">🛡️ Active</span>' : ''}
       ${shieldInCooldown && !shieldActive ? '<span class="safe-badge">Shield Cooldown</span>' : ''}
       ${isLogged && shieldActive ? `<button class="btn btn-xs btn-secondary" onclick="removeShield('${team.id}')">✕ Remove</button>` : ''}
+      ${isAdmin ? `<button class="btn btn-xs btn-secondary" onclick="clearTeamTimers('${team.id}')">⌛ Clear Timers</button>` : ''}
     </div>
   </div>
   <div class="team-body">
@@ -406,7 +409,7 @@ function startTick() {
 
 function tick() {
   if (!gs) return;
-  const now = Date.now();
+  const now = getEffectiveNow();
 
   // Payout countdown
   const pcEl = document.getElementById('payout-countdown');
@@ -507,12 +510,16 @@ function tick() {
 
 function getShieldActiveRemainingMs(team) {
   if (!team || !team.safeEndsAt) return 0;
-  return Math.max(0, team.safeEndsAt - Date.now());
+  return Math.max(0, team.safeEndsAt - getEffectiveNow());
 }
 
 function getShieldCooldownRemainingMs(team) {
   if (!team || !team.shieldCooldownEndsAt) return 0;
-  return Math.max(0, team.shieldCooldownEndsAt - Date.now());
+  return Math.max(0, team.shieldCooldownEndsAt - getEffectiveNow());
+}
+
+function getEffectiveNow() {
+  return gs && gs.timerPaused && gs.globalTimerPausedAt ? gs.globalTimerPausedAt : Date.now();
 }
 
 function syncSeekTargets(teamId) {
@@ -551,7 +558,7 @@ function syncAllCaptureTargets() {
       const post = gs.posts.find(p => p.id === opt.value);
       if (!post) return;
       const owner = gs.teams.find(t2 => t2.id === post.owningTeamId);
-      const now = Date.now();
+      const now = getEffectiveNow();
       const cooldownRem = post.cooldownEndsAt && now < post.cooldownEndsAt ? (post.cooldownEndsAt - now) : 0;
       const cooldownDisabled = cooldownRem > 0;
       const takenByOther = Array.from(selectedByTeam.entries()).some(([otherTeamId, postId]) => otherTeamId !== team.id && postId === opt.value);
@@ -764,6 +771,14 @@ function confirmResetPoints() {
 function confirmRecovery() {
   confirmAction('♻ Restore the last good save snapshot? This overwrites the current live state if the backup is available.',
     () => socket.emit('recoverGameState'));
+}
+
+function clearPostCooldown(postId) {
+  confirmAction('Clear this post timer?', () => socket.emit('clearPostCooldown', { postId }));
+}
+
+function clearTeamTimers(teamId) {
+  confirmAction('Clear this team\'s running timers?', () => socket.emit('clearTeamTimers', { teamId }));
 }
 
 // ── Settings ─────────────────────────────────────────────────────

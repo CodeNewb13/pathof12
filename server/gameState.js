@@ -41,6 +41,7 @@ function createDefaultState() {
     nextPayoutAt: now + DEFAULT_SETTINGS.payoutInterval * 60 * 1000,
     roundCount: 0,
     timerPaused: false,
+    globalTimerPausedAt: null,
     pausedTimeRemaining: null,
     recovery: { available: false, recoveredAt: null, reason: null },
     eventLog: [],
@@ -144,6 +145,11 @@ class GameState {
       dirty = true;
     }
 
+    if (this.state.globalTimerPausedAt === undefined) {
+      this.state.globalTimerPausedAt = null;
+      dirty = true;
+    }
+
     if (this.state.recovery.available === undefined) {
       this.state.recovery.available = false;
       this.state.recovery.recoveredAt = null;
@@ -197,6 +203,29 @@ class GameState {
 
   getState() { return this.state; }
   save() { this.store.save(this.state); }
+
+  _timerNow() {
+    return this.state.timerPaused && this.state.globalTimerPausedAt ? this.state.globalTimerPausedAt : Date.now();
+  }
+
+  _shiftFutureTimers(deltaMs) {
+    if (!deltaMs || deltaMs <= 0) return;
+
+    if (this.state.nextPayoutAt) this.state.nextPayoutAt += deltaMs;
+
+    for (const post of this.state.posts) {
+      if (post.cooldownEndsAt) post.cooldownEndsAt += deltaMs;
+    }
+
+    for (const team of this.state.teams) {
+      if (team.safeEndsAt) team.safeEndsAt += deltaMs;
+      if (team.shieldCooldownEndsAt) team.shieldCooldownEndsAt += deltaMs;
+      if (!team.cooldowns) continue;
+      for (const key of Object.keys(team.cooldowns)) {
+        if (team.cooldowns[key]) team.cooldowns[key] += deltaMs;
+      }
+    }
+  }
 
   getRecoveryInfo() {
     return this.state.recovery || { available: false, recoveredAt: null, reason: null };
@@ -263,8 +292,9 @@ class GameState {
     const team = this.getTeam(teamId);
     if (!team) return { success: false, error: 'Team not found' };
     const cdEnd = this._sanitizeNonNegativeNumber(team.cooldowns && team.cooldowns[actionName] ? team.cooldowns[actionName] : 0, 0);
-    if (cdEnd > Date.now()) {
-      const waitMins = Math.ceil((cdEnd - Date.now()) / 60000);
+    const now = this._timerNow();
+    if (cdEnd > now) {
+      const waitMins = Math.ceil((cdEnd - now) / 60000);
       return { success: false, error: `${team.name} cannot ${actionName} for ${waitMins}m` };
     }
     return { success: true };
@@ -275,11 +305,11 @@ class GameState {
     const duration = this._sanitizeNonNegativeNumber(this.state.settings.actionCooldowns[actionName], 0);
     if (duration > 0) {
       if (!team.cooldowns) team.cooldowns = {};
-      team.cooldowns[actionName] = Date.now() + duration * 60000;
+      team.cooldowns[actionName] = this._timerNow() + duration * 60000;
     }
   }
 
-  clearExpiredShields(now = Date.now()) {
+  clearExpiredShields(now = this._timerNow()) {
     let changed = false;
     for (const team of this.state.teams) {
       if (team.safeEndsAt && now >= team.safeEndsAt) {
@@ -309,7 +339,7 @@ class GameState {
     const cost = this.state.settings.costs.capture || 0;
     if (team.points < cost) return { success: false, error: `Not enough points (need ${cost}, have ${team.points})` };
 
-    const now = Date.now();
+    const now = this._timerNow();
     if (post.cooldownEndsAt && now < post.cooldownEndsAt) {
       const secs = Math.ceil((post.cooldownEndsAt - now) / 1000);
       return { success: false, error: `${post.name} is on cooldown for ${secs}s` };
@@ -394,7 +424,7 @@ class GameState {
     actor.points -= cost;
     post.isSecured = true;
 
-    const now = Date.now();
+    const now = this._timerNow();
     post.cooldownEndsAt = Math.max(post.cooldownEndsAt || 0, now) + this.state.settings.postCooldowns.secure * 60 * 1000;
 
     this.log(`${actor.name} secured ${post.name} (cost: ${cost} pts, post cooldown +${this.state.settings.postCooldowns.secure}m)`);
@@ -407,7 +437,7 @@ class GameState {
     const actor = this.getTeam(actingTeamId);
     if (!actor) return { success: false, error: 'Team not found' };
 
-    const now = Date.now();
+    const now = this._timerNow();
     if (actor.hasSafe && !actor.safeEndsAt) {
       actor.hasSafe = false;
     }
@@ -475,13 +505,14 @@ class GameState {
     }).filter(Boolean);
     this.state.roundCount = (this.state.roundCount || 0) + 1;
     this.log(parts.length ? `Point payout: ${parts.join(', ')}` : 'Point payout: no posts owned');
-    this.state.nextPayoutAt = Date.now() + this.state.settings.payoutInterval * 60 * 1000;
+    this.state.nextPayoutAt = this._timerNow() + this.state.settings.payoutInterval * 60 * 1000;
     this.save();
   }
 
   resetPayoutTimer() {
-    this.state.nextPayoutAt = Date.now() + this.state.settings.payoutInterval * 60 * 1000;
+    this.state.nextPayoutAt = this._timerNow() + this.state.settings.payoutInterval * 60 * 1000;
     this.state.timerPaused = false;
+    this.state.globalTimerPausedAt = null;
     this.state.pausedTimeRemaining = null;
     this.log('Payout timer manually reset');
     this.save();
@@ -489,8 +520,10 @@ class GameState {
 
   pauseTimer() {
     if (this.state.timerPaused) return { success: false, error: 'Timer already paused' };
-    this.state.pausedTimeRemaining = Math.max(0, this.state.nextPayoutAt - Date.now());
+    const now = Date.now();
+    this.state.pausedTimeRemaining = Math.max(0, this.state.nextPayoutAt - now);
     this.state.timerPaused = true;
+    this.state.globalTimerPausedAt = now;
     this.log('Payout timer paused');
     this.save();
     return { success: true };
@@ -498,8 +531,11 @@ class GameState {
 
   resumeTimer() {
     if (!this.state.timerPaused) return { success: false, error: 'Timer is not paused' };
-    this.state.nextPayoutAt = Date.now() + (this.state.pausedTimeRemaining || 0);
+    const now = Date.now();
+    const deltaMs = this.state.globalTimerPausedAt ? now - this.state.globalTimerPausedAt : 0;
+    this._shiftFutureTimers(deltaMs);
     this.state.timerPaused = false;
+    this.state.globalTimerPausedAt = null;
     this.state.pausedTimeRemaining = null;
     this.log('Payout timer resumed');
     this.save();
@@ -641,7 +677,7 @@ class GameState {
 
     if (newSettings.payoutInterval != null) {
       s.payoutInterval = newSettings.payoutInterval;
-      this.state.nextPayoutAt = Date.now() + newSettings.payoutInterval * 60 * 1000;
+      this.state.nextPayoutAt = this._timerNow() + newSettings.payoutInterval * 60 * 1000;
     }
     if (newSettings.costs) Object.assign(s.costs, newSettings.costs);
 
@@ -697,6 +733,7 @@ class GameState {
   resetGame() {
     this.state = createDefaultState();
     this.state.timerPaused = true;
+    this.state.globalTimerPausedAt = Date.now();
     this.state.pausedTimeRemaining = this.state.settings.payoutInterval * 60 * 1000;
     this.state.nextPayoutAt = Date.now() + this.state.pausedTimeRemaining;
     this.save();
@@ -708,10 +745,31 @@ class GameState {
     }
     this.state.roundCount = 0;
     this.state.timerPaused = true;
+    this.state.globalTimerPausedAt = Date.now();
     this.state.pausedTimeRemaining = this.state.settings.payoutInterval * 60 * 1000;
     this.state.nextPayoutAt = Date.now() + this.state.pausedTimeRemaining;
     this.log('Admin reset all team points and restarted/paused the timer.');
     this.save();
+  }
+
+  clearPostCooldown(postId) {
+    const post = this.getPost(postId);
+    if (!post) return { success: false, error: 'Post not found' };
+    post.cooldownEndsAt = null;
+    this.log(`Admin cleared timer on ${post.name}`);
+    this.save();
+    return { success: true };
+  }
+
+  clearTeamTimers(teamId) {
+    const team = this.getTeam(teamId);
+    if (!team) return { success: false, error: 'Team not found' };
+    if (!team.cooldowns) team.cooldowns = { capture: 0, steal: 0, secure: 0, shield: 0, seek: 0 };
+    for (const key of Object.keys(team.cooldowns)) team.cooldowns[key] = 0;
+    team.shieldCooldownEndsAt = null;
+    this.log(`Admin cleared timers for ${team.name}`);
+    this.save();
+    return { success: true };
   }
 }
 
