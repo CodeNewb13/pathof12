@@ -561,6 +561,27 @@ class GameState {
     return { success: true };
   }
 
+  removePostOwnership(postId) {
+    const post = this.getPost(postId);
+    if (!post) return { success: false, error: 'Post not found' };
+    if (!post.owningTeamId) return { success: false, error: `${post.name} is already unowned` };
+
+    const previousOwner = this.getTeam(post.owningTeamId);
+    post.owningTeamId = null;
+    post.isSecured = false;
+    post.cooldownEndsAt = null;
+
+    for (const team of this.state.teams) {
+      if (team.currentLocationPostId === postId) {
+        team.captureTargetTeamId = null;
+      }
+    }
+
+    this.log(`Admin removed ownership of ${post.name}${previousOwner ? ` (was ${previousOwner.name})` : ''}`);
+    this.save();
+    return { success: true };
+  }
+
   removeShield(teamId) {
     const team = this.getTeam(teamId);
     if (!team) return { success: false, error: 'Team not found' };

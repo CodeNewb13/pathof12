@@ -117,6 +117,7 @@ function postCard(post, showDelete = false, index = 0, total = 1) {
       : '<span class="owner-badge unowned" style="padding:4px 8px; border-radius:4px;">Unowned</span>'}
     ${post.isSecured ? `<span class="secured-badge" id="sec-badge-${post.id}">🔒 Secured</span>` : ''}
   </div>
+  ${isAdmin && post.owningTeamId ? `<button class="btn btn-xs btn-secondary" style="margin-top: 6px;" onclick="removePostOwnership('${post.id}')">🏳 Remove Owner</button>` : ''}
   <div class="post-cooldown" id="cd-wrap-${post.id}" style="margin-top: 4px;">
     ${onCooldown && !post.isSecured
       ? `<span class="cooldown-timer" id="cd-${post.id}" data-ends="${post.cooldownEndsAt}">⏳ --:--</span>`
@@ -691,6 +692,13 @@ function unsecurePost(postId) {
   const post = gs.posts.find(p => p.id === postId);
   confirmAction(`Remove Secured status from ${post.name}? (Admin override)`,
     () => socket.emit('unsecurePost', { postId }));
+}
+
+function removePostOwnership(postId) {
+  const post = gs.posts.find(p => p.id === postId);
+  const owner = gs.teams.find(t => t.id === post.owningTeamId);
+  confirmAction(`Remove owner from ${post.name}${owner ? ` (currently ${owner.name})` : ''}?`,
+    () => socket.emit('removePostOwnership', { postId }));
 }
 
 function removeShield(teamId) {

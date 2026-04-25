@@ -369,6 +369,7 @@ io.on('connection', (socket) => {
   socket.on('pauseTimer', () => gameAction('Pause Timer', '', () => game.pauseTimer()));
   socket.on('resumeTimer', () => gameAction('Resume Timer', '', () => game.resumeTimer()));
   socket.on('unsecurePost', ({ postId }) => gameAction('Unsecure Post', `${pn(postId)}`, () => game.unsecurePost(postId)));
+  socket.on('removePostOwnership', ({ postId }) => gameAction('Remove Post Ownership', `${pn(postId)}`, () => game.removePostOwnership(postId)));
   socket.on('removeShield', ({ teamId }) => gameAction('Remove Shield', `${tn(teamId)}`, () => game.removeShield(teamId)));
   socket.on('updateSettings', (settings) => gameAction('Update Settings', 'Global Settings', () => { game.updateSettings(settings); return { success: true }; }));
   socket.on('addPost', ({ tier }) => gameAction('Add Post', `${tier} tier`, () => game.addPost(tier)));
