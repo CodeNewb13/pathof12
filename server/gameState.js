@@ -230,25 +230,25 @@ class GameState {
     return { success: true };
   }
 
-  approveRequest(id) {
+  approveRequest(id, approvedBy = 'Admin') {
     const idx = this.state.requestsQueue.findIndex(r => r.id === id);
     if (idx === -1) return { success: false, error: 'Request not found' };
     const req = this.state.requestsQueue[idx];
     const func = this.requestFunctions[id];
     this.state.requestsQueue.splice(idx, 1);
     delete this.requestFunctions[id];
-    this.log(`Admin approved request: ${req.actionName}`);
+    this.log(`${approvedBy} approved request: ${req.actionName}`);
     if (func) return func();
     return { success: true };
   }
 
-  rejectRequest(id) {
+  rejectRequest(id, rejectedBy = 'Admin') {
     const idx = this.state.requestsQueue.findIndex(r => r.id === id);
     if (idx === -1) return { success: false, error: 'Request not found' };
     const req = this.state.requestsQueue[idx];
     this.state.requestsQueue.splice(idx, 1);
     delete this.requestFunctions[id];
-    this.log(`Request canceled: ${req.actionName} by ${req.username}`);
+    this.log(`${rejectedBy} rejected request: ${req.actionName} (requested by ${req.username})`);
     return { success: true };
   }
 

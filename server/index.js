@@ -321,6 +321,15 @@ io.on('connection', (socket) => {
     handle({ execute: actionFunc });
   }
 
+  function verifyApprover(actionFunc) {
+    const user = getUser();
+    if (!user || (user.role !== 'admin' && user.role !== 'helper')) {
+      socket.emit('actionError', 'Login required');
+      return;
+    }
+    handle({ execute: actionFunc });
+  }
+
   async function handle(op) {
     let result;
     try {
@@ -347,8 +356,8 @@ io.on('connection', (socket) => {
   socket.on('adjustPoints', ({ teamId, amount }) => gameAction('Adjust Points', `${tn(teamId)} by ${amount}`, () => game.adjustPoints(teamId, amount)));
 
   // Queue Approval/Reject actions
-  socket.on('approveRequest', ({ id }) => verifyAdmin(() => game.approveRequest(id)));
-  socket.on('rejectRequest', ({ id }) => verifyAdmin(() => game.rejectRequest(id)));
+  socket.on('approveRequest', ({ id }) => verifyApprover(() => game.approveRequest(id, getUser()?.username || 'Admin')));
+  socket.on('rejectRequest', ({ id }) => verifyApprover(() => game.rejectRequest(id, getUser()?.username || 'Admin')));
   // Anyone can cancel a request (or maybe we restrict to whoever created it, but for simplicity any logged-in user can cancel)
   socket.on('cancelRequest', ({ id }) => { const u = getUser(); if(u) handle({ execute: () => game.rejectRequest(id) }); else socket.emit('actionError', 'Login required'); });
 

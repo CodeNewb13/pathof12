@@ -368,15 +368,15 @@ function renderRequests() {
     return;
   }
 
-  const isAdmin = authUser && authUser.role === 'admin';
+  const canModerateRequests = authUser && (authUser.role === 'admin' || authUser.role === 'helper');
   el.innerHTML = gs.requestsQueue.map(req => `
     <div style="background:var(--bg2); border:1px solid var(--border); padding:10px; border-radius:var(--radius); font-size:0.9rem;">
       <div style="font-weight:bold; margin-bottom:4px; color:var(--blue);">${escHtml(req.actionName)}</div>
       <div style="color:var(--text-muted); margin-bottom:8px;">${escHtml(req.payloadStr)} (Req by: ${escHtml(req.username)})</div>
       <div style="display:flex; gap:6px;">
-        ${isAdmin ? `<button class="btn btn-success btn-xs" onclick="approveRequest('${req.id}')">✔ Approve</button>` : ''}
-        ${isAdmin ? `<button class="btn btn-danger btn-xs" onclick="rejectRequest('${req.id}')">✖ Reject</button>` : ''}
-        ${!isAdmin ? `<button class="btn btn-warning btn-xs" onclick="cancelRequest('${req.id}')">Cancel Request</button>` : ''}
+        ${canModerateRequests ? `<button class="btn btn-success btn-xs" onclick="approveRequest('${req.id}')">✔ Approve</button>` : ''}
+        ${canModerateRequests ? `<button class="btn btn-danger btn-xs" onclick="rejectRequest('${req.id}')">✖ Reject</button>` : ''}
+        ${authUser && authUser.role !== 'admin' ? `<button class="btn btn-warning btn-xs" onclick="cancelRequest('${req.id}')">Cancel Request</button>` : ''}
       </div>
     </div>
   `).join('');
